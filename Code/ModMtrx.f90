@@ -1177,60 +1177,42 @@ subroutine mtrx_dominantc(this, t, k, l, nai, pert1, pert2, steps, maxstepsin)
       end if
     end
     
-    subroutine mtrx_premaxvol(this, t, l, maxr, pert)
+    subroutine mtrx_premaxvol(this, maxr, pert, ABout, cout)
       Class(Mtrx) :: this
-      Integer(4), intent(in) :: t, l
       Type(Vector), intent(inout), optional :: pert
-      Integer(4), intent(in), optional :: maxr
-      Type(Vector) c, w, piv
-      Type(Mtrx) mat, mat2, da, AB, q, A, dapr2, bc
+      Integer(4), intent(in) :: maxr
+      Type(Mtrx), intent(out), optional :: ABout
+      Type(Vector), intent(out), optional :: cout
+      Type(Vector) c, piv, dapr, dapr2, dapr3, bc, q
+      Type(Mtrx) AB
       Integer(4) j, i, rank
-      Integer(4) n, m, maxrank
+      Integer(4) n, m
       Integer(4) ij(1)
       DOUBLE PRECISION tmp, aa
       
-      if (((l > this%m) .and. (t == 1)) .or. ((l > this%n) .and. (t .ne. 1))) then
-        print *, "error in premaxvol"
-      end if
-      if (l < maxr) then
+      if (maxr >= this%m) then
         print *, "error in premaxvol"
       end if
       
-      if (t .eq. 1) then
-        da = .T.(this%submatrix(this%n, l))
-      else
-        da = this%submatrix(l, this%m)
-      end if
-      
-      n = da%n
-      m = da%m
+      n = this%n
+      m = this%m
       
       call c%init(m)
-      call w%init(maxr)
       call AB%init(maxr,m)
-      call A%init(maxr,maxr)
       call piv%init(m)
       do j = 1, m
-        mat = da%submatrix(n, j, 1, j)
-        mat = (.T.mat) * mat
-        c%d(j) = mat%d(1,1)
+        dapr = tovec(this%subarray(n, j, 1, j))
+        c%d(j) = dapr * dapr
         piv%d(j) = j
       end do
       if (present(pert)) then
         piv = pert
       end if
       rank = 0
-      if (present(maxr)) then
-        maxrank = maxr
-      else
-        maxrank = l
-      end if
       ij = maxloc(c%d)
       j = ij(1)
       
-      q = eye(n)
-      
-      do while (rank < maxrank)
+      do while (rank < maxr)
       
         rank = rank + 1
         
@@ -1242,75 +1224,46 @@ subroutine mtrx_dominantc(this, t, k, l, nai, pert1, pert2, steps, maxstepsin)
         c%d(j) = c%d(rank)
         c%d(rank) = tmp
         call AB%swap(2, j, rank)
-        call this%swap(t, j, rank)
-        call da%swap(2, j, rank)
+        call this%swap(2, j, rank)
         aa = sqrt(c%d(rank))
-        if (t .eq. 1) then
-          bc = .T.(this%submatrix(rank, n, rank, 1))
-        else
-          bc = this%submatrix(n, rank, 1, rank)
-        end if
+        bc = tovec(this%subarray(n, rank, 1, rank))
         if (rank > 1) then
-          mat = A%submatrix(rank-1,rank-1)*AB%submatrix(rank-1,rank,1,rank)
+          dapr = tovec(AB%subarray(rank-1, rank, 1, rank))
+          q = (bc - this%subarray(n, rank-1)*dapr)/aa
+        else
+          q = bc/aa
         end if
-        do i = 1, rank-1
-          A%d(i, rank-1) = mat%d(i,1)
-        end do
-        A%d(rank,rank) = aa
+        dapr2 = q*this%subarray(n,m,1,1)
+        dapr2%d(1:rank) = 0
+        
+        !Пересчет A^-1
         if (rank > 1) then
-          mat2 = (bc - q%submatrix(n,rank-1)*mat)/aa
-        else
-          mat2 = bc/aa
+          AB%d(1:rank-1, rank) = -dapr%d(1:rank-1)/aa
         end if
-        do j = 1, n
-          q%d(j,rank) = mat2%d(j,1)
-        end do
-        if (t .eq. 1) then
-          mat = .T.(this%submatrix(m, n, rank, 1))
-        else
-          mat = this%submatrix(n, m, 1, rank)
-        end if
-        if (rank > 1) then
-          mat2 = q%submatrix(n,rank-1)
-          mat2 = ((.T.bc) - ((.T.bc)*mat2)*(.T.mat2))/aa
-        else
-          mat2 = (.T.bc)/aa
-        end if
-        dapr2 = mat2 * mat
+        AB%d(rank, rank) = 1.0d0/aa
         
         !Пересчет c
         c%d(rank) = 0
-        do i = rank + 1, m
-          c%d(i) = c%d(i) - dapr2%d(1,i-rank+1)**2
-        end do
-        
-        !Пересчет w
-        w%d(rank) = 1.0d0/aa**2
-        do i = 1, rank - 1
-          w%d(i) = w%d(i) + AB%d(i, rank)**2*w%d(rank)
-        end do
+        c%d(rank+1:m) = c%d(rank+1:m) - dapr2%d(rank+1:m)**2
         
         !Пересчет AB
-        do i = rank+1, m
-          AB%d(rank, i) = dapr2%d(1,i-rank)/aa
-        end do
+        dapr2 = dapr2/aa
         if (rank > 1) then
-          mat = AB%submatrix(rank-1,rank,1,rank)*(dapr2/aa)
+          call dger(rank-1, AB%m, -1.0d0, dapr%d, 1, dapr2%d, 1, AB%d, AB%n)
         end if
-        do i = rank+1, m
-          do j = 1, rank-1
-            AB%d(j, i) = AB%d(j,i) - mat%d(j, i-rank)
-          end do
-        end do
-        if (rank > 1) then
-          call mat%deinit()
-        end if
+        AB%d(rank,rank+1:m) = dapr2%d(rank+1:m)
 
         ij = maxloc(c%d)
         j = ij(1)
       end do
       if (present(pert)) then
         pert = piv
+      end if
+      if (present(ABout)) then
+        ABout = AB
+      end if
+      if (present(cout)) then
+        cout = c
       end if
     end
     
@@ -1585,13 +1538,15 @@ subroutine mtrx_dominantc(this, t, k, l, nai, pert1, pert2, steps, maxstepsin)
       end if
     end
     
-    subroutine mtrx_dominantr(this, t, r, l, pert, steps, maxstepsin, AIout, ABout)
+    subroutine mtrx_dominantr(this, t, r, l, pert, steps, maxstepsin, AIout, ABout, ABin, cin)
       Class(Mtrx) :: this
       Type(Vector), intent(inout), optional :: pert
       Integer(4), intent(in) :: t, r, l
       Integer(4), intent(out), optional :: steps
       Integer(4), intent(in), optional :: maxstepsin
       Type(Mtrx), intent(out), optional :: AIout, ABout
+      Type(Mtrx), optional :: ABin
+      Type(Vector), optional :: cin
       Type(Mtrx) da, db
       Type(Vector) c, w
       Type(Mtrx) AB, AI, B
@@ -1611,12 +1566,23 @@ subroutine mtrx_dominantc(this, t, k, l, nai, pert1, pert2, steps, maxstepsin)
         da = this%subarray(l, r)
         db = this%subarray(l, this%m, 1, r+1)
       end if
-      call da%qr(q, AI)
-      B = (.T.q) * db
-      AB = AI%rtsolve(B)
-      call dtrtri('U', 'N', r, AI%d, r, info)
+      if (present(ABin)) then
+        AI = ABin%subarray(r, r)
+        AB = ABin%subarray(r, this%m, 1, r+1)
+      else
+        call da%qr(q, AI)
+        B = (.T.q) * db
+        AB = AI%rtsolve(B)
+        call dtrtri('U', 'N', r, AI%d, r, info)
+      end if
+      if (present(cin)) then
+        call c%init(this%m-r)
+        c%d(1:this%m-r) = cin%d(r+1:this%m)
+      else
+        c = (evec(l) * (db .dot. db)) - (evec(r) * (B .dot. B))
+      end if
+      
       w = (AI .dot. AI) * evec(r)
-      c = (evec(l) * (db .dot. db)) - (evec(r) * (B .dot. B))
 
       B = (AB .dot. AB)
       call B%update1v(1.0d0,w,c)
@@ -2302,7 +2268,9 @@ subroutine mtrx_dominantc(this, t, k, l, nai, pert1, pert2, steps, maxstepsin)
       end if
       call r%init(min(m, n), m)
       call dlacpy('U', min(n,m), m, da, n, r%d, min(n,m))
-      q = da
+      q%n = size(da, 1)
+      q%m = size(da, 2)
+      q%d = da
       Deallocate(work)
     end
     
