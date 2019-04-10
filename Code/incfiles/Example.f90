@@ -1,10 +1,10 @@
 
 subroutine Example()
   USE ModMtrx
-  Type(Mtrx) U, V, S, A, C, CA, AR, ART, E, Ahat, A1, A2, AB, RT, R, Q
-  Type(Vector) pert1, pert2, pert3, perti
+  Type(Mtrx) U, V, S, A, C, CA, AR, ART, E, Ahat, A1, A2, AB, ABin, RT, R, Q
+  Type(Vector) pert1, pert2, pert3, perti, cin
   Integer(4) n, k, maxswaps, swapsmade, i, j
-  Double precision f, dsecnd, time
+  Double precision dsecnd, time
   
   !WELCOMING AND INITIALIZATION
   print *, 'Welcome to the low-rank approximation example!'
@@ -13,15 +13,21 @@ subroutine Example()
   print *, 'compute fast low-rank approximations and compare them.'
   print *, 'If you get no error here, you are fine!'
   print *, ''
-  print *, 'We generate a 1000 by 1000 random matrix...'
-  n = 1000
+  print *, 'We generate a 2000 by 2000 random matrix...'
+  n = 2000
+  !desired rank
+  k = 10
+  !maximum number of steps for maxvol and maxvol-rect
+  maxsteps = 2
+  !maximum number of row and column swaps for maxvol and maxvol-rect
+  maxswaps = 4*k
+  
   call U%random(n)
   call V%random(n)
   call S%init(n,n)
   print *, 'Done!'
   print *, ''
   print *, 'We set the first 10 singular values to be equal to 100 and others to 1.'
-  k = 10
   do i = 1, k
     S%d(i,i) = 100.0d0
   end do
@@ -32,8 +38,7 @@ subroutine Example()
   print *, 'Done!'
   print *, ''
   print *, 'We seek rank 10 approximation, so Frobenius norm error of SVD is'
-  f = sqrt(dble(n-k))
-  print *, 'SVD error:', f
+  print *, 'SVD error:', sqrt(dble(n-k))
   print *, ''
   
   !MAXVOL
@@ -51,9 +56,7 @@ subroutine Example()
   time = dsecnd()
   
   !Here we use 'cmaxvol', which is maxvol in columns
-  maxswaps = 2*k
-  !Let's do 4 steps
-  do i = 1, 2
+  do i = 1, maxsteps
     !Select first k columns
     !Instead of Arows and Acols one can use any other
     !functions, which read or calculate values of A only
@@ -61,11 +64,11 @@ subroutine Example()
     !So A is not needed to be stored.
     C = Acols(A, k, pert1, pert2)
     !Use column version of maxvol.
+    !And C \hat A^{-1}: CA
+    !Hereinafter all parameters after sizes and pert are optional
+    call C%cmaxvol(pert1, swapsmade, maxswaps, CA)
     !One can also get the number of swaps made: swapsmade
     !One can use swapsmade=0 as a stopping criterion.
-    !And C \hat A^{-1}: CA
-    !Hereinafter all parameters after sizes are optional
-    call C%cmaxvol(pert1, swapsmade, maxswaps, CA)
     !Select and transpose first k rows
     RT = .T.Arows(A, k, pert1, pert2)
     !We again use column version and swap columns
@@ -131,7 +134,8 @@ subroutine Example()
   !MAXVOL-PROJ
   print *, 'Nobody needs maxvol-rect separately, so let us use MAXVOL-PROJ'
   print *, 'We discard previous rows and columns'
-  print *, 'And try to construct approximation from the beginning'
+  print *, '(To illustrate that maxvol-proj can work without initialization)'
+  print *, 'And try to construct approximation from random start'
   call pert1%deinit()
   call pert2%deinit()
   call pert1%pert(n)
@@ -145,7 +149,7 @@ subroutine Example()
   !so no comment
 
   !maxvol-rect of size 2k x k
-  do i = 1, 2
+  do i = 1, maxsteps
     R = Arows(A, 2*k,pert1, pert3)
     call R%dominantr(2, k, 2*k, pert3, swapsmade)
     C = Acols(A, k, pert1, pert3)
@@ -155,7 +159,7 @@ subroutine Example()
   call pert3%deinit()
   call pert3%pert(n)
   !maxvol-rect of size k x 2k
-  do i = 1, 2
+  do i = 1, maxsteps
     C = Acols(A, 2*k, pert3, pert2)
     call C%dominantr(1, k, 2*k, pert3, swapsmade)
     R = Arows(A, k, pert3, pert2)
@@ -194,8 +198,11 @@ subroutine Example()
   
   !We will work in the copy of A
   call A1%copy(A)
+  !We will use pre-maxvol to decrease time and increase accuracy
+  !ABin and cin will be passed to Dominant-R to remove initialization of AB and c
+  call A1%premaxvol(k, pert2, ABin, cin)
   !Let's limit ourselves to 2*k swaps
-  call A1%dominantr(2, k, n, pert2, swapsmade, 2*k, Ahat, AB)
+  call A1%dominantr(2, k, n, pert2, swapsmade, 2*k, Ahat, AB, ABin, cin)
   
   Ahat = .T.Ahat
   !We do not need Q; pert3 and Q are dummy variables here
