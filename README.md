@@ -6,7 +6,7 @@ This repository contains Fortran code of the methods from
 
 Module ModAppr contains subroutines for low-rank approximations. There are also vector (ModVec) and matrix (ModMtrx) modules, which can be quite useful.
 
-The use of all the new algorithms is illustrated in incfiles/ExampleA.f90 and incfiles/ExampleB.f90
+The use of all of the approximation algorithms is illustrated in incfiles/ExampleA.f90 and incfiles/ExampleB.f90
 
 To compile and run it, use either
 
