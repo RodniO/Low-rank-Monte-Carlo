@@ -15,6 +15,7 @@ Module ModIntVec
       Procedure :: swap => intvec_swap !Swap two vector elements
       Procedure :: reverse => intvec_reverse !Reverse order of elements
       Procedure :: copy => intvec_copy !Copy vector
+      Procedure :: perminv => intvec_perminv !Inverse permutation
   End type
   
   !Turns integer array to IntVec type
@@ -119,6 +120,17 @@ Module ModIntVec
       Class(IntVec) :: this
       this%n = 0
       Deallocate(this%d)
+    end
+    
+    function intvec_perminv(this) Result(res)
+      Class(IntVec) :: this
+      Type(IntVec) :: res
+      Integer(4) i
+      res%n = this%n
+      Allocate(res%d(this%n))
+      do i = 1, this%n
+        res%d(this%d(i)) = i
+      end do
     end
 
 end

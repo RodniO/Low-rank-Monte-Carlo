@@ -17,6 +17,7 @@ subroutine ExampleB()
   Double precision dsecnd, time
   
   !WELCOMING AND INITIALIZATION
+  print *, ''
   print *, 'Welcome to the second example!'
   print *, ''
   print *, 'Now we are to construct approximation of the ballistic coagulation kernel.'
@@ -73,8 +74,4 @@ subroutine ExampleB()
   
   E = A - C*UR
   print *, 'MAXVOL with TSVD error:', E%fnorm()
-  
-  print *, ''
-  print *, 'All done.'
-  print *, 'Good bye!'
 end

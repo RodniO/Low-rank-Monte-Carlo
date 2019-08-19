@@ -1,4 +1,5 @@
 source = src
+obj = ModIntVec.o ModVec.o ModMtrx.o ModSparse.o ModAppr.o ModRecon.o Main.o
 incfiles = $(wildcard $(source)/incfiles/*.f90)
 
 all:	intel
@@ -7,7 +8,7 @@ run:	intel_run
 
 compiler_intel = ifort
 opt_intel = -module ./obj_intel -O3 -xHost -no-wrap-margin
-obj_intel = $(addprefix obj_intel/, ModIntVec.o ModVec.o ModMtrx.o ModAppr.o Main.o)
+obj_intel = $(addprefix obj_intel/, $(obj))
 exe_intel = Main.exe
 
 intel_run:	intel
@@ -31,7 +32,7 @@ obj_intel/Main.o:	$(source)/Main.f90	$(incfiles)
 	
 compiler_gnu = gfortran
 opt_gnu = -J./obj_gnu -I./obj_gnu -O3 -Wall -Wno-uninitialized -Wno-unused-function -Wno-unused-dummy-argument -fimplicit-none -pedantic
-obj_gnu = $(addprefix obj_gnu/, ModIntVec.o ModVec.o ModMtrx.o ModAppr.o Main.o)
+obj_gnu = $(addprefix obj_gnu/, $(obj))
 exe_gnu = Main_gnu.exe
 
 gnu_run:	gnu
