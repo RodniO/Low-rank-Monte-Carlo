@@ -1251,8 +1251,8 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
         steps = curministeps
       end if
     end
-    
-    subroutine mtrx_dominantr(this, t, r, l, per, steps, maxstepsin, AIout, ABout, ABin, cin)
+	
+	subroutine mtrx_dominantr(this, t, r, l, per, steps, maxstepsin, AIout, ABout, ABin, cin, roin)
       Class(Mtrx) :: this
       Type(IntVec), intent(inout), optional :: per
       Integer(4), intent(in) :: t, r, l
@@ -1261,6 +1261,7 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
       Type(Mtrx), intent(out), optional :: AIout, ABout
       Type(Mtrx), optional :: ABin
       Type(Vector), optional :: cin
+      Double precision, intent(in), optional :: roin
       Type(Mtrx) da, db
       Type(Vector) c, w
       Type(Mtrx) AB, AI, B
@@ -1268,17 +1269,24 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
       Type(Mtrx) q
       Integer(4) info
       Integer(4) ij(2), i1, j1, i
-      DOUBLE PRECISION ro, l1, abij
+      DOUBLE PRECISION ro, maxro, l1, abij, wi
       Integer(4) cursteps, maxsteps
-      Type(Vector) c1, c2, abj, aig, aii, abi
-      Type(Vector) v
+      Type(Vector) c3, c4, c1l1, abj, aig, aii, abi
+      Type(Vector) v, vaig
+      Double precision anorm
       
+      anorm = this%fnorm()
       if (t .eq. 1) then
         da = .T.(this%subarray(r, l))
         db = .T.(this%subarray(this%n, l, r+1, 1))
       else
         da = this%subarray(l, r)
         db = this%subarray(l, this%m, 1, r+1)
+      end if
+      if (present(roin)) then
+        maxro = roin
+      else
+        maxro = 1.0d0
       end if
       if (present(ABin)) then
         AI = ABin%subarray(r, r)
@@ -1295,6 +1303,7 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
       else
         c = (evec(l) * (db .dot. db)) - (evec(r) * (B .dot. B))
       end if
+      c%d(:) = max(0.0d0,c%d(:)-eps*anorm**2)
       
       w = (AI .dot. AI) * evec(r)
 
@@ -1309,18 +1318,20 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
       if (present(maxstepsin)) then
         maxsteps = maxstepsin
       end if
-      do while ((abs(ro) > 1.0d0) .and. (cursteps < maxsteps))
+      
+      do while ((abs(ro) > maxro) .and. (cursteps < maxsteps))
         !Initialization of variables
         abij = AB%d(i1,j1)
         l1 = sqrt(c%d(j1))
         aii = tovec(AI%subarray(i1, r, i1, 1))
-        aig = AI*aii
+        wi = w%d(i1)
+        aig = AI*(aii/wi)
         abi = tovec(AB%subarray(i1, AB%m, i1, 1))
         abj = tovec(AB%subarray(r, j1, 1, j1))
-        c1 = ((tovec(db%subarray(l, j1, 1, j1)) - da*abj) / l1) * db
+        c1l1 = (tovec(db%subarray(l, j1, 1, j1)) - da*abj) * db
+        c1l1%d(:) = min(c1l1%d(:), l1*sqrt(c%d(:)))
+        c1l1%d(:) = max(c1l1%d(:), -l1*sqrt(c%d(:)))
         !Swap columns
-        call c2%copy(c1)
-        c2%d(j1) = 0.0d0
         do i = 1, r
           AB%d(i,j1) = 0.0d0
         end do
@@ -1336,22 +1347,32 @@ subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
           call per%swap(i1,j1+r)
         end if
         !Recalculate c
-        c2 = c2 * (-abij/ro)
-        call c2%update1(l1/ro, abi)
-        c = c - (c1 .dot. c1) + (c2 .dot. c2)
-        c1%d(j1) = 0.0d0
+        call c3%copy(c1l1)
+        c3 = c3 * (1 + abij/ro)
+        call c3%update1(-l1**2/ro, abi)
+        c3%d(j1) = (1-1/ro)*l1**2
+        call c4%copy(c1l1)
+        c4 = c4 * (w%d(i1)/(B%d(i1,j1)+abij*ro))
+        call c4%update1(1.0d0/ro, abi)
+        c4%d(j1) = 1.0d0+1.0d0/ro
+        c = c - (c3 .dot. c4)
+        c%d(:) = max(0.0d0,c%d(:)-eps*anorm**2)
+        
         !Recalculate AI
-        call v%copy(abj)
-        call v%update1((ro - abij) / w%d(i1), aig)
-        v%d(i1) = v%d(i1) - 1.0d0
-        call AI%update1v(-1.0d0/(v%d(i1) + 1.0d0), v, aii)
+        call v%copy(abj/ro)
+        call v%update1(wi*l1**2/(B%d(i1,j1)+abij*ro), aig)
+        v%d(i1) = 1 - 1.0d0/ro
+        call AI%update1v(-1.0d0, v, aii)
         !Recalculate w
-        w = w + (v .dot. (v * (w%d(i1) / (v%d(i1) + 1.0d0)**2) - aig * (2.0d0 / (v%d(i1) + 1.0d0))))
+        w = w + ((wi*v) .dot. (v - 2.0d0 * aig))
+        
         !Recalculate AB
-        call AB%update1v(-1.0d0/(v%d(i1) + 1.0d0), v, abi)
-        aig = aig * (l1/(ro + abij))
-        call aig%update1(-aig%d(i1)/(v%d(i1) + 1.0d0), v)
-        call AB%update1v(1.0d0, aig, c1-c2)
+        call AB%update1v(-1.0d0, v, abi)
+        c3%d(j1) = -l1**2/ro
+        call vaig%copy(abj/ro)
+        call vaig%update1(-(abij**2 + abij*ro)/(B%d(i1,j1)+abij*ro), aig)
+        vaig%d(i1) = 1 - 1.0d0/ro - aig%d(i1)
+        call AB%update1v(-wi/(ro+abij), vaig, c3)
 
         B = (AB .dot. AB)
         call B%update1v(1.0d0,w,c)
