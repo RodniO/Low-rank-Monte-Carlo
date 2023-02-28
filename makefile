@@ -64,6 +64,8 @@ help:
 	@ echo "then run '$(exe_intel)'"
 	@ echo "Or use 'make run'/'make intel_run' to compile and run"
 	@ echo ""
+	
+clean:	clear
 
 clear:
 	rm -rf obj_gnu

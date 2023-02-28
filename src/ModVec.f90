@@ -14,15 +14,15 @@ Module ModVec
     Contains
       Procedure :: init => Vector_constructor !Allocates and initializes with zeros
       Procedure :: deinit => Vector_destructor !Deallocates
-      Procedure :: set => Vector_set !Sets d to desired array
       Procedure :: norm => vec_norm !Euclidean vector norm
       Procedure :: cnorm => vec_cnorm !Infinity (max) norm
       Procedure :: random => Vec_random !Random unit vector
       Procedure :: badrandom => Vec_badrandom !Vector with uniform random elements
+      Procedure :: subarray => Vec_subarray !Returns subvector
       Procedure :: permapp => Vec_permapp !Apply permutation
       Procedure :: swap => Vec_swap !Swap two vector elements
       Procedure :: normalize => Vec_normalize !Normalize vector to unity
-      Procedure :: maxelement => Vec_maxelement !Find maximum (absolute value) element
+      Procedure :: maxelement => Vec_maxelement !Find position of maximum (absolute value) element
       Procedure :: house => Vec_house !Create Householder reflection
       Procedure :: sort => Vec_sort !Vector sort
       Procedure :: intarray => Vec_toint !Round values to integers
@@ -177,7 +177,7 @@ Module ModVec
       Class(Vector) :: this
       DOUBLE PRECISION, intent(in) :: alpha
       Type(Vector), intent(in) :: x
-      call daxpy(this%n, alpha, x%d, 1, this%d, 1)
+      call daxpy(min(this%n,x%n), alpha, x%d, 1, this%d, 1)
     end
     
     function Vec_toint(this) Result(array)
@@ -255,20 +255,35 @@ Module ModVec
         this%d(i) = 2*r-1
       end do
     end
+    
+    !UNTESTED: FAILS ON SVD
+    !Would be good to enable permutations as input
+    !Or create another subroutine (same name?) for that
+    function Vec_subarray(this, n, k) Result(res)
+      Class(Vector), intent(in) :: this
+      Integer(4), intent(in) :: n
+      Integer(4), intent(in), optional :: k
+      Integer(4) n1
+      Type(Vector) res
+      if (.not. present(k)) then
+        n1 = 1
+      else
+        n1 = k
+      end if
+      res%n = n - n1 + 1
+      Allocate(res%d(res%n))
+      res%d = this%d(n1:n)
+    end
   
     subroutine Vector_constructor(this, n)
       Class(Vector) :: this
       Integer(4) n
       this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
       Allocate(this%d(n))
       this%d = 0
-    end
-    
-    subroutine Vector_set(this, d)
-      Class(Vector) :: this
-      DOUBLE PRECISION :: d(:)
-      this%d = d
-      this%n = size(d)
     end
     
     subroutine Vector_destructor(this)
@@ -281,14 +296,14 @@ Module ModVec
       Type(Vector), intent(in) :: this
       DOUBLE PRECISION res, ddot
       Type(Vector), intent(in) :: v2
-      if (this%n == v2%n) then
+      !if (this%n == v2%n) then
         res = ddot(this%n, this%d, 1, v2%d, 1)
-      else
-        print *, "error mult_vec"
-      endif
+      !else
+      !  print *, "error mult_vec"
+      !endif
     end
       
-    function mul_tnum(this, num) Result(res)
+    elemental function mul_tnum(this, num) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       DOUBLE PRECISION, intent(in) :: num
@@ -296,7 +311,7 @@ Module ModVec
       res%d = num * this%d
     end
     
-    function mul_tnumr(this, num) Result(res)
+    elemental function mul_tnumr(this, num) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       Real(4), intent(in) :: num
@@ -304,7 +319,7 @@ Module ModVec
       res%d = num * this%d
     end
     
-    function mul_numt(num, this) Result(res)
+    elemental function mul_numt(num, this) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       DOUBLE PRECISION, intent(in) :: num
@@ -312,7 +327,7 @@ Module ModVec
       res%d = num * this%d
     end
     
-    function mul_numtr(num, this) Result(res)
+    elemental function mul_numtr(num, this) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       Real(4), intent(in) :: num
@@ -320,14 +335,14 @@ Module ModVec
       res%d = num * this%d
     end
     
-    function div_num(this, num) Result(res)
+    elemental function div_num(this, num) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       DOUBLE PRECISION, intent(in) :: num
       res = this * (1.0d0 / num)
     end
     
-    function div_numr(this, num) Result(res)
+    elemental function div_numr(this, num) Result(res)
       Type(Vector), intent(in) :: this
       Type(Vector) :: res
       Real(4), intent(in) :: num
@@ -346,48 +361,48 @@ Module ModVec
       res = idamax(this%n, this%d, 1)
     end
     
-    function vec_sum(v1, v2) Result(res)
+    elemental function vec_sum(v1, v2) Result(res)
       Type(Vector), intent(in) :: v1, v2
       Type(Vector) :: res
       res%n = v1%n
-      if (v1%n == v2%n) then
+      !if (v1%n == v2%n) then
         res%d = v1%d + v2%d
-      else
-        print *, "error sum_vec", v1%n, v2%n
-      endif
+      !else
+      !  print *, "error sum_vec", v1%n, v2%n
+      !endif
     end
     
-    function vec_sub(v1, v2) Result(res)
+    elemental function vec_sub(v1, v2) Result(res)
       Type(Vector), intent(in) :: v1, v2
       Type(Vector) :: res
       res%n = v1%n
-      if (v1%n == v2%n) then
+      !if (v1%n == v2%n) then
         res%d = v1%d - v2%d
-      else
-        print *, "error sub_vec", v1%n, v2%n
-      endif
+      !else
+      !  print *, "error sub_vec", v1%n, v2%n
+      !endif
     end
     
-    function vec_dotmul(v1, v2) Result(res)
+    elemental function vec_dotmul(v1, v2) Result(res)
       Type(Vector), intent(in) :: v1, v2
       Type(Vector) :: res
       res%n = v1%n
-      if (v1%n == v2%n) then
+      !if (v1%n == v2%n) then
         res%d = v1%d * v2%d
-      else
-        print *, "error dotmul_vec", v1%n, v2%n
-      endif
+      !else
+      !  print *, "error dotmul_vec", v1%n, v2%n
+      !endif
     end
     
-    function vec_dotdiv(v1, v2) Result(res)
+    elemental function vec_dotdiv(v1, v2) Result(res)
       Type(Vector), intent(in) :: v1, v2
       Type(Vector) :: res
       res%n = v1%n
-      if (v1%n == v2%n) then
+      !if (v1%n == v2%n) then
         res%d = v1%d / v2%d
-      else
-        print *, "error dotdiv_vec", v1%n, v2%n
-      endif
+      !else
+      !  print *, "error dotdiv_vec", v1%n, v2%n
+      !endif
     end
     
     subroutine intvec_sort(array_size,index,value)
@@ -411,12 +426,14 @@ Module ModVec
     end subroutine
     
     !Create vector of ones or vector of standard basis
-    function evec(n, m1) Result(res)
+    elemental function evec(n, m1) Result(res)
       Integer(4), intent(in) :: n
       Integer(4), intent(in), optional :: m1
       Type(Vector) :: res
       Integer(4) i
-      call res%init(n)
+      res%n = n
+      Allocate(res%d(n))
+      res%d = 0
       if (present(m1)) then
         res%d(m1) = 1.0d0
       else

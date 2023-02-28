@@ -1,12 +1,12 @@
 Module ModAppr
-  USE ModMtrx
+  USE ModSparse
   
   !Module for constructing fast approximations
   !Contains maxvol, maxvol2, maxvolproj and TruncateCUR
 
   abstract interface
     !Interface for function, returning matrix elements
-    function elem_fun(i, j, param) Result(res)
+    pure function elem_fun(i, j, param) Result(res)
       USE ModMtrx
       Integer(4), intent(in) :: i, j
       Type(Mtrx), intent(in) :: param
@@ -15,6 +15,88 @@ Module ModAppr
   end interface
   
   Contains
+  
+!Calculates matrix element for i-th row and j-th column.
+pure function Afun_elem(i, j, param) Result(res)
+  Integer(4), intent(in) :: i, j !row and column indices
+  Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
+  Double precision :: res !Output value
+  !Just uses parameters array as the input matrix
+  res = param%d(i,j)
+end
+
+pure function Afun_uv(i, j, param) Result(res)
+  Integer(4), intent(in) :: i, j !row and column indices
+  Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
+  Double precision :: res !Output value
+  
+  Integer(4) k, i1
+  
+  k = param%m/2
+  res = 0.0d0
+  do i1 = 1, k
+    res = res + param%d(i,i1)*param%d(j,i1+k)
+  end do
+end
+
+pure function Afun_uv_err(i, j, param) Result(res)
+  Integer(4), intent(in) :: i, j !row and column indices
+  Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
+  Double precision :: res !Output value
+  
+  Integer(4) k, i1
+  
+  k = param%m/3
+  res = 0.0d0
+  do i1 = 1, k
+    res = res + param%d(i,i1)*param%d(j,i1+k)
+  end do
+end
+
+pure function Afun_uvmod(i, j, param) Result(res)
+  Integer(4), intent(in) :: i, j !row and column indices
+  Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
+  Double precision :: res !Output value
+  
+  Integer(4) k, i1
+  
+  k = param%m/2
+  res = 0.0d0
+  do i1 = 1, k
+    res = res + param%d(i,i1)*param%d(j,i1+k)
+  end do
+  if (res < param%d(1,2*k+1)) then
+    res = param%d(1,2*k+1)
+  else if ((res > param%d(2,2*k+1)) .and. (param%d(2,2*k+1) > param%d(1,2*k+1))) then
+    res = param%d(2,2*k+1)
+  end if
+end
+
+pure function Afun_uvmod_err(i, j, param) Result(res)
+  Integer(4), intent(in) :: i, j !row and column indices
+  Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
+  Double precision :: res !Output value
+  
+  Integer(4) k, i1
+  Double precision res2, resmin, resmax
+  
+  k = param%m/3
+  res = 0.0d0
+  do i1 = 1, k
+    res = res + param%d(i,i1)*param%d(j,i1+k)
+  end do
+  res2 = 0.0d0
+  do i1 = 2*k+1, 2*k+k/2
+    res2 = res2 + param%d(i,i1)*param%d(j,i1+k/2)
+  end do
+  resmin = param%d(1,3*k+1) + max(0.0d0, res2)
+  resmax = param%d(2,3*k+1) + min(0.0d0, res2)
+  if (res < resmin) then
+    res = resmin
+  else if ((res > resmax) .and. (param%d(2,3*k+1) > param%d(1,3*k+1) )) then
+    res = resmax
+  end if
+end
   
 !Returns r columns of length N with elements from Afun
 function Acols(Afun, N, r, per1, per2, param) Result(res)
@@ -30,6 +112,24 @@ function Acols(Afun, N, r, per1, per2, param) Result(res)
   do j = 1, r
     do i = 1, N
       res%d(i,j) = Afun(per1%d(i), per2%d(j), param)
+    end do
+  end do
+end
+
+!Returns r columns of length N with elements from Afun
+function Acolst(Afun, N, r, per1, per2, param) Result(res)
+  procedure(elem_fun) :: Afun !Function, returning elements of A
+  Integer(4), intent(in) :: N, r !Length and number of columns
+  Type(IntVec), intent(in) :: per1, per2 !Permutations of rows and columns
+  Type(Mtrx), intent(in) :: param !Parameters for Afun
+  Type(Mtrx) :: res !Output matrix of columns
+  
+  Integer(4) i, j
+  
+  call res%init(r, N)
+  do j = 1, r
+    do i = 1, N
+      res%d(j,i) = Afun(per1%d(i), per2%d(j), param)
     end do
   end do
 end
@@ -242,10 +342,11 @@ end
 !Decreases approximation rank (therefore, use higher rank in advance)
 !ALWAYS use for geometrically (exponentially) decreasing singular values!!!
 !(allows to get close to exact SVD much much faster)
-subroutine TruncateCUR(C, UR, new_rank, err_bound)
+subroutine TruncateCUR(C, UR, new_rank, err_bound, trunc_err)
   Type(Mtrx) :: C, UR !Factors of CUR approximation
   Integer(4), intent(in) :: new_rank !Maximum allowed rank
   Double precision, intent(in), optional :: err_bound !Error bound
+  Double precision, intent(out), optional :: trunc_err !Truncation error
   !Nullifies all singular values smaller than err_bound
   
   Double precision tau !Another name for err_bound
@@ -281,6 +382,13 @@ subroutine TruncateCUR(C, UR, new_rank, err_bound)
       exit
     end if
   end do
+  if (present(trunc_err)) then
+    trunc_err = 0
+    do i = rank+1, k
+      trunc_err = trunc_err + S%d(i,i)**2
+    end do
+    trunc_err = sqrt(trunc_err)
+  end if
   
   !Exit if no truncation needed
   if (rank == k) then
@@ -292,6 +400,251 @@ subroutine TruncateCUR(C, UR, new_rank, err_bound)
   V = S%subarray(rank, rank) * V%subarray(rank, k)
   C = U%multq(Q1, tau1, 'L', 'D')
   UR = V%multq(Q2, tau2, 'R', 'U')
+end
+
+!Alternating projections for nonnegative matrix approximation
+!with truncated SVD replaced by CUR
+subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult, C, AR, verbose)
+  procedure(elem_fun) :: Afun !Function, returning elements of A
+  Type(Mtrx), intent(in) :: param !Parameters for Afun
+  Integer(4), intent(in) :: M, N, rank !Sizes of A and the desired rank
+  Integer(4) :: k2, k3 !Submatrix sizes for TSVD and projective volume
+  Double precision, intent(in) :: minelem !Desired minimum matrix element
+  Double precision, intent(in), optional :: maxelemin !Desired minimum matrix element
+  Double precision, intent(in) :: epsmult !Error multiplicator for shift calculation
+  Type(Mtrx), intent(out) :: C, AR !Output aprroximation of rank "rank"
+  Integer(4), intent(in) :: verbose !0-2; how much to print.
+  
+  Integer(4) maxsteps, maxswaps
+  Type(IntVec) peri, peri2, per1, per2
+  Type(Mtrx) R1, L2, R, U, S, V, Ahat, Q1, Q2, param_uv, EU, EV
+  Integer(4) i, j, steps, cur, bads
+  Double precision eps2, badstot, maxelem, elem, epsmin, tmp
+  Type(Vector) tau, tau2
+  
+  Double precision normf
+  
+  if (present(maxelemin)) then
+    maxelem = maxelemin
+  else
+    maxelem = minelem
+  end if
+  
+  !Maximum number of steps for maxvol
+  maxsteps = 4
+  !Maximum number of row and column swaps for maxvol
+  maxswaps = 2*rank
+
+  call per1%perm(M)
+  call per2%perm(N)
+  call peri%perm(M)
+  call peri2%perm(N)
+  
+  !Start should be good, so random rows and columns are chosen and then improved with premaxvol
+  do i = 1, k3
+    call random_number(tmp)
+    j = k3+1 + FLOOR((M-k3)*tmp)
+    call per1%swap(i,j)
+  end do
+  R = Arows(Afun, k3, N, per1, per2, param)
+  call R%premaxvol(k2, per2)
+  Ahat = .T.(R%subarray(k3,k2))
+  call Ahat%premaxvol(k2, per1)
+  
+  call maxvol(Afun, M, N, k2, per1, per2, param, C, AR, maxsteps, maxswaps)
+  call maxvol2(Afun, k3, k3, per1, per2, param, C, AR)
+  
+  C = Acols(Afun, M, k3, peri, per2, param)
+  R = Arows(Afun, k3, N, per1, per2, param)
+  Ahat = R%subarray(k3,k3)
+  call Ahat%svd(U, S, V)
+  cur = k2
+  do i = k3, 1, -1
+    if (((S%d(i,i) > eps*k3*S%d(1,1)) .or. (i <= rank)) .and. (i <= k2)) then
+      S%d(i,i) = 1.0d0/S%d(i,i)
+    else
+      S%d(i,i) = 0
+      cur = i-1
+    end if
+  end do
+  call R%permcols(per2, 2)
+  U = U%subarray(k3,cur)
+  V = S%subarray(cur,cur)*V%subarray(cur,k3)
+  C = C*(.T.V)
+  AR = (.T.U)*R
+  
+  if (cur > rank) then
+    call C%halfqr(Q1, tau, R1)
+    call AR%halflq(L2, tau2, Q2)
+    Ahat = R1*L2
+    call Ahat%svd(U, S, V)
+    normf = 0
+    do i = 1, rank
+      normf = normf + S%d(i,i)**2
+    end do
+    normf = sqrt(normf)
+    U = U%subarray(cur, rank)
+    V = S%subarray(rank, rank) * V%subarray(rank, cur)
+    C = U%multq(Q1, tau, 'L', 'D')
+    AR = V%multq(Q2, tau2, 'R', 'U')
+  else
+    call C%halfqr(Q1, tau, R1)
+    call AR%halflq(L2, tau2, Q2)
+    Ahat = R1*L2
+    call Ahat%svd(U, S, V)
+    normf = 0
+    do i = 1, rank
+      normf = normf + S%d(i,i)**2
+    end do
+    normf = sqrt(normf)
+  end if
+  
+  call param_uv%init(max(M,N),2*rank+1)
+  do i = 1, rank
+    do j = 1, M
+      param_uv%d(j,i) = C%d(j,i)
+    end do
+    do j = 1, N
+      param_uv%d(j,i+rank) = AR%d(i,j)
+    end do
+  end do
+  param_uv%d(1,2*rank+1) = minelem
+  param_uv%d(2,2*rank+1) = maxelem
+  
+  call EU%init(M,rank*2)
+  call EV%init(N,rank*2)
+  do i = 1, rank
+    do j = 1, M
+      EU%d(j,i+rank) = C%d(j,i)
+    end do
+    do j = 1, N
+      EV%d(j,i+rank) = -AR%d(i,j)
+    end do
+  end do
+  epsmin = 0
+
+  badstot = M*N
+  
+  if (verbose > 0) then
+    print *, 'Initial approximation done.'
+  end if
+  
+  !k2 = k3
+  
+  maxsteps = 2
+  steps = 0
+  do while (.true.)
+    steps = steps + 1
+    
+    C = Acols(Afun_uvmod, M, k3, peri, per2, param_uv)
+    R = Arows(Afun_uvmod, k3, N, per1, per2, param_uv)
+    
+    Ahat = R%subarray(k3,k3)
+    call Ahat%svd(U, S, V)
+    !Replace sqrt(eps) with eps? It got bad errors sometimes, but can't find why and when.
+    do i = k3, 1, -1
+      if (((S%d(i,i) > eps*k3*S%d(1,1)) .or. (i <= rank+1)) .and. (i <= k2)) then
+        S%d(i,i) = 1.0d0/S%d(i,i)
+      else
+        S%d(i,i) = 0
+        cur = i
+      end if
+    end do
+    call R%permcols(per2, 2)
+    U = U%subarray(k3,cur)
+    V = S%subarray(cur,cur)*V%subarray(cur,k3)
+    C = C*(.T.V)
+    AR = (.T.U)*R
+  
+    call TruncateCUR(C, AR, rank)
+    eps2 = epsmult*epsmin/sqrt(badstot)
+    do i = 1, rank
+      do j = 1, M
+        param_uv%d(j,i) = C%d(j,i)
+      end do
+      do j = 1, N
+        param_uv%d(j,i+rank) = AR%d(i,j)
+      end do
+    end do
+    param_uv%d(1,2*rank+1) = minelem+eps2
+    param_uv%d(2,2*rank+1) = maxelem-eps2
+  
+    if (epsmin == 0.0d0) then
+      do i = 1, rank
+        do j = 1, M
+          EU%d(j,i) = C%d(j,i)
+        end do
+        do j = 1, N
+          EV%d(j,i) = AR%d(i,j)
+        end do
+      end do
+      call EU%halfqr(Q1, tau, R1)
+      R = EV*(.T.R1)
+      epsmin = max(R%fnorm(),normf*eps/10.0d0*sqrt(badstot))
+    
+      if (verbose > 1) then
+        print *, '1) Distance to rank r 2) shift:'
+        print *, epsmin, eps2
+      end if
+    end if
+    
+    if (verbose > 1) then
+      print *, 'Step', steps
+    end if
+  
+    !call maxvol(Afun_uvmod, M, N, rank, per1, per2, param_uv, C, AR, maxsteps, maxswaps)
+    
+    bads = 0
+    do j = 1, N
+      R = C*AR%subarray(rank, per2%d(j), 1, per2%d(j))
+      do i = 1, M
+        elem = R%d(per1%d(i),1)
+        if ((elem < minelem) .or. ((elem > maxelem) .and. (maxelem .ne. minelem))) then
+          bads = bads + 1
+          exit
+        end if
+      end do
+      if (bads > 0) then
+        exit
+      end if
+    end do
+    if ((bads == 0) .or. (steps > 200)) then
+      S = Arows(Afun, M, N, peri, peri2, param)
+      U = S - C*AR
+      U = U*(1.0d0/S%fnorm())
+      exit
+    end if
+    
+    !premaxvol не должен портить maxvol!!!
+    do i = rank+1, k3
+      call random_number(tmp)
+      j = rank+1 + FLOOR((M-rank)*tmp)
+      call per1%swap(i,j)
+    end do
+    R = Arows(Afun_uvmod, k3, N, per1, per2, param_uv)
+    call R%premaxvol(k2, per2)
+    do i = k2+1, k3
+      call random_number(tmp)
+      j = k2+1 + FLOOR((N-k2)*tmp)
+      call per2%swap(i,j)
+    end do
+    C = Acolst(Afun_uvmod, M, k3, per1, per2, param_uv)
+    call C%premaxvol(k2, per1)
+    call maxvol(Afun_uvmod, M, N, rank, per1, per2, param_uv, C, AR, maxsteps, maxswaps)
+    
+  end do
+  
+  if (verbose == 1) then
+    print *, 'STEPS:', steps
+  end if
+  
+  if (bads > 0) then
+    print *, 'DID NOT CONVERGE!'
+  else
+    if (verbose > 0) then
+      print *, 'Nonnegative approximation finished.'
+    end if
+  end if
 end
 
 end module

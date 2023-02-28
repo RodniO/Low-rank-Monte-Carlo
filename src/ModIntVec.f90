@@ -95,6 +95,9 @@ Module ModIntVec
       Integer(4), intent(in) :: n
       Integer(4) i
       this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
       Allocate(this%d(n))
       do i = 1, n
         this%d(i) = i
@@ -131,6 +134,24 @@ Module ModIntVec
       do i = 1, this%n
         res%d(this%d(i)) = i
       end do
+    end
+    
+    !Create vector of ones or vector of standard basis
+    elemental function eveci(n, m1) Result(res)
+      Integer(4), intent(in) :: n
+      Integer(4), intent(in), optional :: m1
+      Type(IntVec) :: res
+      Integer(4) i
+      res%n = n
+      Allocate(res%d(n))
+      res%d = 0
+      if (present(m1)) then
+        res%d(m1) = 1
+      else
+        do i = 1, n
+          res%d(i) = 1
+        end do
+      end if
     end
 
 end

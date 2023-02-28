@@ -65,7 +65,7 @@ subroutine ExampleR()
   
   print *, ''
   print *, 'All done.'
-  print *, 'Good bye!'
+  print *, 'Goodbye!'
 end
 
 !Test subroutine used to get the data from the paper (in preparation) and

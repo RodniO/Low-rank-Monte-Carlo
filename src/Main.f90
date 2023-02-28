@@ -5,6 +5,7 @@ program bubr
   call init_random_seed()
   call ExampleA()
   call ExampleB()
+  call ExampleP()
   call ExampleR()
   !do mt = 1, 4
   !  do i = 0, 20
@@ -16,6 +17,7 @@ program bubr
 
 include "incfiles/ExampleA.f90"
 include "incfiles/ExampleB.f90"
+include "incfiles/ExampleP.f90"
 include "incfiles/ExampleR.f90"
 
 !Random seed generator

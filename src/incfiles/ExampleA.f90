@@ -1,6 +1,6 @@
 
 !Calculates matrix element for i-th row and j-th column.
-function Aelem(i, j, param) Result(res)
+pure function Aelem(i, j, param) Result(res)
   USE ModMtrx
   Integer(4), intent(in) :: i, j !row and column indices
   Type(Mtrx), intent(in) :: param !Arbitrary array of parameters
