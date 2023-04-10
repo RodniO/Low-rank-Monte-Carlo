@@ -109,7 +109,7 @@ Module ModIntVec
       Integer(4) n
       this%n = n
       Allocate(this%d(n))
-      this%d = 0
+      this%d(:) = 0
     end
     
     subroutine intvec_set(this, d)
@@ -136,21 +136,18 @@ Module ModIntVec
       end do
     end
     
-    !Create vector of ones or vector of standard basis
-    elemental function eveci(n, m1) Result(res)
+    !Create vector of ones or k-th vector of standard basis
+    elemental function eveci(n, k) Result(res)
       Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: m1
+      Integer(4), intent(in), optional :: k
       Type(IntVec) :: res
-      Integer(4) i
       res%n = n
       Allocate(res%d(n))
-      res%d = 0
-      if (present(m1)) then
-        res%d(m1) = 1
+      if (present(k)) then
+        res%d(:) = 0
+        res%d(k) = 1
       else
-        do i = 1, n
-          res%d(i) = 1
-        end do
+        res%d(:) = 1
       end if
     end
 

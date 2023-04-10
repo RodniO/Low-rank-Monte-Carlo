@@ -6,12 +6,12 @@ Module ModRecon
   Contains
 
   !Reconstruction subroutine. The only one to be called externally. Others just split the code.
-  subroutine reconstruct(KnownSparse, r, lcurmat, rcurmat, maxtime, errorin, verbose, maxio)
+  subroutine reconstruct(KnownSparse, r, lcurmat, rcurmat, maxtime, maxerror, verbose, maxio)
     Type(SparseRow), intent(in) :: KnownSparse !Known elements as a sparse matrix
     Integer(4), intent(in) :: r !Desired rank
     Type(Mtrx) :: lcurmat, rcurmat !Low-rank factors. Must be initialized in advance
     Double precision, intent(in) :: maxtime !Maximum allowed computation time
-    Double precision, optional, intent(in) :: errorin !Maximum allowed relative error
+    Double precision, optional, intent(in) :: maxerror !Maximum allowed relative error
     Integer(4), optional, intent(in) :: verbose !How much to print. 0-3.
     !0 - no print
     !1 - no explanation
@@ -20,7 +20,7 @@ Module ModRecon
     Integer(4), optional, intent(out) :: maxio
   
     Double precision dsecnd !Function for time evaluation from lapack
-    Double precision maxerror !Copy of errorin
+    Double precision maxerror_ !Absolute allowed maximum error
     Double precision curerror !Temporary for error computation
     Double precision curtime !Current time
     Integer(4) n, m !Number of rows and columns
@@ -43,7 +43,7 @@ Module ModRecon
     Type(Mtrx) p1, p2, cpmat, rpmat, u, s, v !Temporary matrices
     Double precision tmp !Temporary
     Integer(4) i, j, j1, j2, k, l, nz !Cycle counters
-    Integer(4) ifprint !Another name for verbose
+    Integer(4) verbose_ !Another name for verbose
   
     !Variables for iteration cycle (see below)
     Integer(4) everybi, bi, bads, goods, steps, swaps, maxsteps, lastr, maxir
@@ -54,9 +54,9 @@ Module ModRecon
     Type(Mtrx) savedlcm, savedrcm, savedcpm, savedrpm
     Type(IntVec) savedp1, savedp2
     
-    ifprint = 0
+    verbose_ = 0
     if (present(verbose)) then
-      ifprint = verbose
+      verbose_ = verbose
     end if
   
     KnownSparsec = KnownSparse
@@ -79,8 +79,8 @@ Module ModRecon
     r2 = min(r2, m)
     sq = max(sq, 1.0d0)
     
-    if (ifprint > 0) then
-      if (ifprint == 2) then
+    if (verbose_ > 0) then
+      if (verbose_ == 2) then
         print *, 'Size; rank; maxvol rank; rows and columns in total.'
       end if
       write(*,'(A,I0,A,I0,A,I0,A,I0,A,I0)') ' ', n, ' x ', m, ', ', r, ', ', r1, ', ', r2
@@ -89,10 +89,10 @@ Module ModRecon
     curtime = dsecnd()
   
     matmasknorm = KnownSparse%fnorm()
-    if (present(errorin)) then
-      maxerror = errorin*matmasknorm
+    if (present(maxerror)) then
+      maxerror_ = maxerror*matmasknorm
     else
-      maxerror = eps*matmasknorm
+      maxerror_ = eps*matmasknorm
     end if
   
     call perm1%perm(n)
@@ -242,7 +242,7 @@ Module ModRecon
                 curerror = curerror + tmp**2
               end do
               curerror = sqrt(curerror)
-              if (ifprint == 3) then
+              if (verbose_ == 3) then
                 print *, curerror
               end if
             end if
@@ -334,7 +334,7 @@ Module ModRecon
       end if
       
       !Exit if time is up or desired quality reached
-      if ((dsecnd() >= maxtime + curtime) .or. (minerror <= maxerror)) then
+      if ((dsecnd() >= maxtime + curtime) .or. (minerror <= maxerror_)) then
         maxi = i
         exit
       end if
@@ -346,13 +346,13 @@ Module ModRecon
     end if
 
     !Debug output
-    if (ifprint == 2) then
+    if (verbose_ == 2) then
       print *, 'Iterations, maxvol steps, maxvol swaps'
     end if
-    if (ifprint > 0) then
+    if (verbose_ > 0) then
       print *, maxi, steps, swaps
     end if
-    if (ifprint == 3) then
+    if (verbose_ == 3) then
       print *, (steps+0.0d0)/i, (swaps+0.0d0)/maxi/2, sq, minsq
     end if
     
@@ -468,15 +468,15 @@ Module ModRecon
     if (maxswaps > 0) then
       if (tst > 0) then
         curc = lcurmat * rcurmat%subarray(r,r1)
-        call replace(curc, KnownSparse,KnownSparsec,sq,2,r1,perm2,perm1)
+        call replace(curc,KnownSparse,KnownSparsec,sq,2,r1,perm2,perm1)
         curc2 = curc .dI. curc%subarray(r1, r1)
       end if
-      call curc2%hmaxvol2(1, r1, r2, perm1, 1, lcurmat)
+      call curc2%hmaxvol2(1, r1, r2, perm1, .true., lcurmat)
     end if
 
     if (maxswaps > 0) then
       curr2 = .T.curr2
-      call curr2%hmaxvol2(2, r1, r2, perm2, 1, rcurmat)
+      call curr2%hmaxvol2(2, r1, r2, perm2, .true., rcurmat)
     end if
     
     if (swaps - prevtst >= r) then

@@ -11,9 +11,9 @@ end
 
 subroutine ExampleA()
   USE ModAppr
-  Type(Mtrx) U, V, S, A, C, AR, E, Ahat, A1, AB, ABin, R, Q
+  Type(Mtrx) U, V, A, C, CA, AR, E, Ahat, A1, AB, ABin, R, Q
   Type(IntVec) per1, per2, per3, peri
-  Type(Vector) cin
+  Type(Vector) cin, S
   Integer(4) n, k, maxsteps, maxswaps, swapsmade, i
   Double precision dsecnd, time
   
@@ -39,19 +39,19 @@ subroutine ExampleA()
   print *, 'with random singular vectors (now generating)...'
   call U%random(n)
   call V%random(n)
-  call S%init(n,n)
+  call S%init(n)
   print *, 'Done!'
   print *, ''
   
   write(*,'(A,I0,A)') ' We set the first ', k, ' singular values'
   print *, 'to 100 and others to 1...'
   do i = 1, k
-    S%d(i,i) = 100.0d0
+    S%d(i) = 100.0d0
   end do
   do i = k+1, n
-    S%d(i,i) = 1.0d0
+    S%d(i) = 1.0d0
   end do
-  A = U*S*V
+  A = U*(S .dot. V)
   print *, 'Done!'
   print *, ''
   
@@ -71,7 +71,7 @@ subroutine ExampleA()
   time = dsecnd()
   
   !Find dominant k by k submatrix \hat A and construct C \hat A^{-1} R approximation
-  call maxvol(Aelem, n, n, k, per1, per2, A, C, AR, maxsteps, maxswaps)
+  call maxvol(Aelem, n, n, k, per1, per2, A, C, AR, maxsteps, maxswaps, CA, .true.)
   
   time = dsecnd() - time
   print *, 'MAXVOL time:', time
@@ -89,12 +89,12 @@ subroutine ExampleA()
   print *, 'Remember, that we search in rows and columns from MAXVOL'
   
   !Increase submatrix size to 2k by 2k
-  call maxvol2(Aelem, 2*k, 2*k, per1, per2, A, C, AR)
+  call maxvol2(Aelem, 2*k, 2*k, per1, per2, A, CA, AR, .true.)
   
   time = dsecnd() - time
   print *, 'FAST CUR time:', time
   
-  E = A - C*AR
+  E = A - CA*AR
   print *, 'FAST CUR error:', E%fnorm()
   print *, ''
   

@@ -5,13 +5,25 @@ Module ModMtrx
   
   !Also contains dominant submatrix search
   !(premaxvol, maxvol, maxvol2, dominantr, dominantc)
-  ![1] A.I. Osinsky. Rectangular maximum volume and projective volume search algorithms // arXiv 1809.02334 (Submitted on 7 Sep 2018)
+  ![1] A.I. Osinsky,
+  !Rectangular maximum volume and projective volume search algorithms 
+  !// arXiv 1809.02334 (Submitted on 7 Sep 2018)
   
   !And some other algorithms described in
-  ![2] M. Gu, S. C. Eisenstat, efficient algorithms for computing a strong rank-revealing qr factorization // SIAM J. ScI. COMPUT. — 1996. — Vol. 17, no. 4. — P. 848-869.
-  ![3] How to find a good submatrix / S.A. Goreinov, I.V. Oseledets, D.V. Savostyanov et al. // Matrix Methods: Theory, Algorithms, Applications / Ed. by V. Olshevsky, E. Tyrtyshnikov. — World Scientific Publishing, 2010. — P. 247-256.
-  ![4] Michalev A.Y., Oseledets I.V. Rectangular maximum-volume submatrices and their applications // Linear Algebra and its Applications. — 2018. — Vol. 538. — P. 187–211.
-  ![5] A.I. Osinsky, N.L. Zamarashkin. Pseudo-skeleton approximations with better accuracy estimates // Linear Algebra and its Applications — 2018. — Vol. 537. — P. 221-249.
+  ![2] M. Gu, S. C. Eisenstat, 
+  !Efficient algorithms for computing a strong rank-revealing qr factorization // 
+  !SIAM J. ScI. COMPUT. — 1996. — Vol. 17, no. 4. — P. 848-869.
+  ![3] How to find a good submatrix / 
+  !S.A. Goreinov, I.V. Oseledets, D.V. Savostyanov et al. // 
+  !Matrix Methods: Theory, Algorithms, Applications / 
+  !Ed. by V. Olshevsky, E. Tyrtyshnikov.
+  !— World Scientific Publishing, 2010. — P. 247-256.
+  ![4] Michalev A.Y., Oseledets I.V. 
+  !Rectangular maximum-volume submatrices and their applications // 
+  !Linear Algebra and its Applications. — 2018. — Vol. 538. — P. 187–211.
+  ![5] A.I. Osinsky, N.L. Zamarashkin. 
+  !Pseudo-skeleton approximations with better accuracy estimates // 
+  !Linear Algebra and its Applications — 2018. — Vol. 537. — P. 221-249.
 
   !Matrix type
   Type Mtrx
@@ -23,16 +35,19 @@ Module ModMtrx
       Procedure :: deinit => Mtrx_destructor !Deallocates
       Procedure :: gauss => mtrx_gauss !Random gaussian matrix
       Procedure :: random => mtrx_random !Random orthogonal matrix
+      Procedure :: randsvd => mtrx_randsvd !RANDSVD ensemble matrix
       Procedure :: mask => mtrx_mask !Random mask of 0-s and 1-s
       Procedure :: badrandom => mtrx_badrandom !Random matrix with uniform elements
       Procedure :: subarray => mtrx_subarray !Returns submatrix
       Procedure :: subcol => mtrx_subcol !Returns subset of columns
-      Procedure :: svd => mtrx_svd !Performs full SVD
+      Generic :: svd => mtrx_svd, mtrx_svdv !Performs full SVD
+      Procedure, private :: mtrx_svd, mtrx_svdv
+      Procedure :: svdr => mtrx_svdr !Truncated SVD
       Procedure :: rtsolve => mtrx_rtsolve !Right triangular solver
       Procedure :: ltsolve => mtrx_ltsolve !Left triangular solver
       Procedure :: halfqr => mtrx_halfqr !Finds R of QR decomposition
       Procedure :: qr => mtrx_qr !Performs QR decomposition
-      Procedure :: halflq => mtrx_halflq !Fands L of LQ decomposition
+      Procedure :: halflq => mtrx_halflq !Finds L of LQ decomposition
       Procedure :: lq => mtrx_lq !Performs LQ decomposition
       Procedure :: multq => mtrx_multq !Multiplies by a set of orthogonal reflectors
       Procedure :: hqr => mtrx_hqr !Householder QR with pivoting
@@ -41,10 +56,12 @@ Module ModMtrx
       Procedure :: swap => mtrx_swap !Swaps two rows or two columns
       Procedure :: permrows => mtrx_permrows !Permutes rows
       Procedure :: permcols => mtrx_permcols !Permutes columns
-      Procedure :: cmaxvol => mtrx_cmaxvol, mtrx_cmaxvolro !maxvol in columns [3]
+      Generic :: cmaxvol => mtrx_cmaxvol, mtrx_cmaxvolro !maxvol in columns [3]
+      Procedure, private :: mtrx_cmaxvol, mtrx_cmaxvolro
       Procedure :: fbmaxvol => mtrx_fbmaxvol !Gaussian elimination with complete pivoting
       Procedure :: maxvol2 => mtrx_maxvol2 !Original maxvol2 (aka rect_maxvol) [4]
       Procedure :: hmaxvol2 => mtrx_hmaxvol2 !Faster (Householder-based) maxvol2 [1]
+      Procedure :: hmaxvolold => mtrx_hmaxvolold !Old Householder-based version
       Procedure :: dominantc => mtrx_dominantc !Dominant-C [1]
       Procedure :: premaxvol => mtrx_premaxvol !Pre-maxvol [1]
       Procedure :: maxvol252 => mtrx_maxvol252 !Original Dominant-R from [1]
@@ -123,14 +140,14 @@ Module ModMtrx
   
     subroutine mtrx_reshape(this, n, np)
       Class(Mtrx) :: this
-      Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: np
+      Integer(4), intent(in) :: n !Left dimension
+      Integer(4), intent(in), optional :: np !Middle dimension (n "rows" are skipped if present)
       Integer(4) m
-      DOUBLE PRECISION, Allocatable :: d(:,:,:,:)
+      DOUBLE PRECISION, Allocatable :: d(:,:,:)
       if (present(np)) then
         if (n >= np) then
           m = this%n*this%m
-          d = reshape(this%d, (/np,n/np,np,m/n/np/), ORDER = (/3,2,1,4/))
+          d = reshape(this%d, (/n,np,m/n/np/), ORDER = (/2,1,3/))
           this%d = reshape(d, (/np,m/np/))
           this%n = np
           this%m = m/np
@@ -176,16 +193,14 @@ Module ModMtrx
   
     function mtrx_fnorm(this) Result(res)
       Class(Mtrx) :: this
-      DOUBLE PRECISION res, dlange
-      DOUBLE PRECISION, dimension(:) :: work(1)
-      res = dlange('F', this%n, this%m, this%d, this%n, work)
+      DOUBLE PRECISION res
+      res = norm2(this%d)
     end
     
     function mtrx_cnorm(this) Result(res)
       Class(Mtrx) :: this
-      DOUBLE PRECISION res, dlange
-      DOUBLE PRECISION, dimension(:) :: work(this%n)
-      res = dlange('M', this%n, this%m, this%d, this%n, work)
+      DOUBLE PRECISION res
+      res = maxval(abs(this%d))
     end
     
     function mtrx_norm2(this) Result(res)
@@ -408,12 +423,12 @@ Module ModMtrx
       end if
     end
     
-    subroutine mtrx_fbmaxvol(this, per1, per2, teps, r, curc)
-      Class(Mtrx) :: this
+    subroutine mtrx_fbmaxvol(this, per1, per2, teps, r, A)
+      Class(Mtrx) :: this !Rewritten with error matrix
       Type(IntVec) :: per1, per2
       Double precision, intent(in) :: teps
       Integer(4), intent(out) :: r
-      Type(Mtrx), optional :: curc
+      Type(Mtrx), optional :: A
       Type(Mtrx) :: err
       Type(Vector) :: u, v
       Integer(4) n, m, k, i, j, i1, ij1(2), ij2(2)
@@ -452,9 +467,9 @@ Module ModMtrx
         call err%update1v(-1.0d0/err%d(i,j),u,v)
         call per1%swap(i1, i)
         call per2%swap(i1, j)
-        if (present(curc)) then
-          call curc%swap(1, i1, i)
-          call curc%swap(2, i1, j)
+        if (present(A)) then
+          call A%swap(1, i1, i)
+          call A%swap(2, i1, j)
         end if
       end do
     end
@@ -466,7 +481,7 @@ Module ModMtrx
       call dger(this%n, this%m, alpha, x%d, 1, y%d, 1, this%d, this%n)
     end
     
-    subroutine mtrx_hmaxvol2(this, tin, k, l, per, CIN, addmask)
+    subroutine mtrx_hmaxvolold(this, tin, k, l, per, CIN, addmask)
       Class(Mtrx) :: this
       Type(Mtrx) :: C
       Type(IntVec), optional :: per
@@ -475,22 +490,27 @@ Module ModMtrx
       Type(Vector) :: LB, CI, CJ
       Integer(4), intent(in) :: k, l
       Integer(4), intent(in) :: tin
-      Integer(4) t
+      Integer(4) t, CIN2
       Integer(4) n, i1, cr
       Integer(4) ij(1)
       DOUBLE PRECISION tau, ls, alpha
       if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
         if (.not. present(CIN)) then
-          print *, "error in hmaxvol2"
+          print *, "error in hmaxvolold"
         end if
       end if
       if (l < k) then
-        print *, "error in hmaxvol2"
+        print *, "error in hmaxvolold"
+      end if
+      if (present(CIN)) then
+        CIN2 = CIN
+      else
+        CIN2 = 0
       end if
       if (tin .eq. 1) then
         t = 1
         n = this%n
-        if ((present(CIN)) .and. (CIN == 1)) then
+        if (CIN2 == 1) then
           C = this%subarray(n, k, k+1, 1)
         else
           C = this%subarray(n, k, k+1, 1) .dI. this%subarray(k, k)
@@ -498,7 +518,7 @@ Module ModMtrx
       else
         t = 2
         n= this%m
-        if ((present(CIN)) .and. (CIN == 1)) then
+        if (CIN2 == 1) then
           C = .T.this%subarray(k, n, 1, k+1)
         else
           C = .T.(this%subarray(k, k) .Id. this%subarray(k, n, 1, k+1))
@@ -532,6 +552,79 @@ Module ModMtrx
         call LB%update1(-ls/(1.0d0+ls),CI .dot. CI)
         ls = 1.0d0/sqrt(1.0d0 + ls)
         C%d(:,1) = C%d(:,1)*ls
+      end do
+    end
+    
+    subroutine mtrx_hmaxvol2(this, tin, k, l, per, cin, addmask)
+      Class(Mtrx) :: this
+      Type(Mtrx) :: C
+      Type(IntVec), optional :: per
+      Logical, optional :: cin
+      Type(Mtrx), intent(in), optional :: addmask
+      Type(Vector) :: LB, CI, CJ
+      Integer(4), intent(in) :: k, l
+      Integer(4), intent(in) :: tin
+      Integer(4) t
+      Logical cin_
+      Integer(4) n, i1, cr
+      Integer(4) ij(1)
+      DOUBLE PRECISION ls
+      if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
+        if (.not. present(CIN)) then
+          print *, "error in hmaxvol2"
+        end if
+      end if
+      if (l < k) then
+        print *, "error in hmaxvol2"
+      end if
+      if (present(cin)) then
+        cin_ = cin
+      else
+        cin_ = .false.
+      end if
+      if (tin == 1) then
+        t = 1
+        n = this%n
+        if (cin_) then
+          C = this%subarray(n, k, k+1, 1)
+        else
+          C = this%subarray(n, k, k+1, 1) .dI. this%subarray(k, k)
+        end if
+      else
+        t = 2
+        n = this%m
+        if (cin_) then
+          C = .T.this%subarray(k, n, 1, k+1)
+        else
+          C = .T.(this%subarray(k, k) .Id. this%subarray(k, n, 1, k+1))
+        end if
+      end if
+      if (n > 2*k) then
+        LB%n = n
+        LB%d = sum(C%d**2, dim = 2)
+      else
+        LB = (C .dot. C)*evec(k) !Faster if LB has size n < 2*k AND evec is on the right
+      end if
+      do cr = 1, l-k
+        ij = maxloc(LB%d)
+        i1 = ij(1)
+        call this%swap(t, i1+k, cr+k)
+        if (present(per)) then
+          call per%swap(i1+k, cr+k)
+        end if
+        if (present(addmask)) then
+          call addmask%swap(tin, i1+k, cr+k)
+        end if
+        ls = LB%d(i1)
+        CI = tovec(C%subarray(i1, k, i1, 1))
+        CJ = C*CI
+        call C%update1v((1.0d0/sqrt(1.0d0+ls)-1.0d0)/ls,CJ,CI)
+        ls = -1.0d0/(1.0d0+ls)
+        CJ%d(:) = CJ%d(:)**2
+        call LB%update1(ls,CJ)
+        C%d(i1,:) = C%d(cr,:)
+        LB%d(i1) = LB%d(cr)
+        LB%d(cr) = 0
       end do
     end
     
@@ -759,24 +852,19 @@ Module ModMtrx
 !       end if
 !     end
 
-    subroutine mtrx_dominantc(this, t, k, l, nai, per1, per2, steps, maxstepsin)
+    subroutine mtrx_dominantc(this, t, k, l, per, steps, maxsteps)
       Class(Mtrx) :: this
-      Type(Mtrx) :: A, CI, CI1, CB, CBI, B
-      Type(IntVec), optional :: per1, per2
-      Type(Vector) :: LB, LC
-      Integer(4), intent(in), optional :: nai
+      Type(Mtrx) :: A, CB, B
+      Type(IntVec), optional :: per
+      Type(Vector) :: LB, LC, CI, CI1, CBI
       Integer(4), intent(in) :: k, l
       Integer(4), intent(in) :: t
       Integer(4), intent(out), optional :: steps
-      Integer(4), intent(in), optional :: maxstepsin
-      Integer(4) n, m, i, j, i1, j1, tm, maxsteps, cursteps, na
+      Integer(4), intent(in), optional :: maxsteps
+      Integer(4) n, m, i, j, i1, tm, maxsteps_, cursteps
       Integer(4) ij(2)
       DOUBLE PRECISION k11, k12
-      Integer(4) tmpi
-      na = 0
-      if (present(nai)) then
-        na = nai
-      end if
+      
       n = this%n
       m = this%m
       if (((l > n) .and. (t == 1)) .or. ((l > m) .and. (t .ne. 1))) then
@@ -785,7 +873,6 @@ Module ModMtrx
       if (l < k) then
         print *, "error in maxvol2.5.1"
       end if
-      call LB%init(max(m,n))
       if (t .eq. 1) then
       !Work in columns
         tm = 1
@@ -801,70 +888,53 @@ Module ModMtrx
         CB = A .Id. CB
         CB = .T.CB
       end if
-      do i1 = l+1, n
-        LB%d(i1) = 1.0d0
-      end do
-      do i1 = 1, n
-        do j1 = 1, l
-          LB%d(i1) = LB%d(i1) + CB%d(i1,j1) ** 2
-        end do
-      end do
+      B = CB .dot. CB
+      LB%n = n
+      LB%d = sum(B%d, dim = 2)
+      LB%d(l+1:n) = LB%d(l+1:n) + 1.0d0
       call LC%init(l)
+      CI1%n = n
+      Allocate(CI1%d(n))
+      
       do i1 = 1, l
         LC%d(i1) = 1.0d0 - CB%d(i1,i1)
       end do
-      B = CB .dot. CB
       call B%update1v(1.0d0,LB,LC)
       ij = maxloc(B%d)
       i = ij(1)
       j = ij(2)
-      maxsteps = 2*l
-      if (present(maxstepsin)) then
-        maxsteps = maxstepsin
+      if (present(maxsteps)) then
+        maxsteps_ = maxsteps
+      else
+        maxsteps_ = 2*l
       end if
       cursteps = 0
       do while (B%d(i,j) > 1.0d0)
-        if (cursteps >= maxsteps) exit
         call this%swap(tm, i, j)
-        if ((present(per1)) .and. (present(per2))) then
-          if (tm == 1) then
-            tmpi = per1%d(i)
-            per1%d(i) = per1%d(j)
-            per1%d(j) = tmpi
-          else
-            tmpi = per2%d(i)
-            per2%d(i) = per2%d(j)
-            per2%d(j) = tmpi
-          end if
+        if (present(per)) then
+          call per%swap(i,j)
         end if
         
         k11 = LB%d(i)
-        CBI = CB%subarray(i, l, i, 1)/k11
-        CI = CB*(.T.CBI)
+        CBI = tovec(CB%subarray(i, l, i, 1))
+        CI = CB*(CBI/k11)
         do i1 = 1, n
-          LB%d(i1) = LB%d(i1) - k11*CI%d(i1,1)**2
+          LB%d(i1) = LB%d(i1) - k11*CI%d(i1)**2
         end do
-        !CB = CB - CI*CB%subarray(i, l, i, 1)
-        call CB%update1v(-1.0d0,tovec(CI),tovec(CB%subarray(i, l, i, 1)))
+        !call LB%update1(-k11, CI .dot. CI) !Slower
+        call CB%update1v(-1.0d0,CI,CBI)
         call CB%swap(1,i,j)
-        call CI%swap(1,i,j)
+        call CI%swap(i,j)
         call LB%swap(i,j)
         LB%d(i) = LB%d(i)+1.0d0
         LB%d(j) = LB%d(j)-1.0d0
-        CI1 = 1.0d0*CI
-        do i1 = 1, n
-          CI%d(i1,1) = CB%d(i1,j)
-          CB%d(i1,j) = CI1%d(i1,1)
-        end do
-        !k12 = 1.0d0/(1 - (LB%d(i)-1.0d0))
+        CI1%d(:) = CB%d(:,j)
+        CB%d(:,j) = CI%d(:)
         k12 = 1.0d0/(2 - LB%d(i))
         do i1 = 1, n
-          LB%d(i1) = LB%d(i1) + k12*CI%d(i1,1)**2
+          LB%d(i1) = LB%d(i1) + k12*CI1%d(i1)**2
         end do
-        !CB = CB + k12*CI*CB%subarray(i, l, i, 1)
-        call CB%update1v(k12,tovec(CI),tovec(CB%subarray(i, l, i, 1)))
-        !CB = CB + k12*CI*CB%subarray(j, l, j, 1)
-        !call CB%swap(1,i,j)
+        call CB%update1v(k12,CI1,tovec(CB%subarray(i, l, i, 1)))
         
         do i1 = 1, l
           LC%d(i1) = 1.0d0 - CB%d(i1,i1)
@@ -875,6 +945,7 @@ Module ModMtrx
         i = ij(1)
         j = ij(2)
         cursteps = cursteps + 1
+        if (cursteps >= maxsteps_) exit
       end do
       if (present(steps)) then
         steps = cursteps
@@ -993,6 +1064,7 @@ Module ModMtrx
     !  end if
     !end
     
+    !AB are r rows of size n.
     subroutine mtrx_premaxvol(this, maxr, per, ABout, cout)
       Class(Mtrx) :: this
       Type(IntVec), intent(inout), optional :: per
@@ -1005,8 +1077,7 @@ Module ModMtrx
       Integer(4) j, rank
       Integer(4) n, m
       Integer(4) ij(1)
-      DOUBLE PRECISION tmp, aa
-      Integer(4) tmpi
+      DOUBLE PRECISION aa, cmin
       
       if (maxr > this%m) then
         print *, "error in premaxvol"
@@ -1029,29 +1100,28 @@ Module ModMtrx
       rank = 0
       ij = maxloc(c%d)
       j = ij(1)
+      cmin = -c%d(j)
+      where(c%d == 0) c%d = cmin
       
       do while (rank < maxr)
       
         rank = rank + 1
         
         !Put j in place of rank
-        tmpi = piv%d(j)
-        piv%d(j) = piv%d(rank)
-        piv%d(rank) = tmpi
-        tmp = c%d(j)
-        c%d(j) = c%d(rank)
-        c%d(rank) = tmp
+        call piv%swap(j, rank)
+        call c%swap(j, rank)
         call AB%swap(2, j, rank)
         call this%swap(2, j, rank)
-        aa = sqrt(c%d(rank))
         bc = tovec(this%subarray(n, rank, 1, rank))
         if (rank > 1) then
           dapr = tovec(AB%subarray(rank-1, rank, 1, rank))
-          q = (bc - this%subarray(n, rank-1)*dapr)/aa
+          q = bc - this%subarray(n, rank-1)*dapr
         else
-          q = bc/aa
+          q = bc
         end if
-        dapr2 = q*this%subarray(n,m,1,1)
+        call q%normalize()
+        dapr2 = q*this
+        aa = dapr2%d(rank)
         dapr2%d(1:rank) = 0
         
         !Recalculate A^{-1}
@@ -1061,18 +1131,18 @@ Module ModMtrx
         AB%d(rank, rank) = 1.0d0/aa
         
         !Recalculate c
-        c%d(rank) = 0
+        c%d(rank) = cmin
         c%d(rank+1:m) = c%d(rank+1:m) - dapr2%d(rank+1:m)**2
         
         !Recalculate AB
-        dapr2 = dapr2/aa
+        dapr2%d(:) = dapr2%d(:)/aa
         if (rank > 1) then
           call dger(rank-1, AB%m, -1.0d0, dapr%d, 1, dapr2%d, 1, AB%d, AB%n)
         end if
         AB%d(rank,rank+1:m) = dapr2%d(rank+1:m)
 
-        ij = maxloc(c%d)
-        j = ij(1)
+        ij = maxloc(c%d(rank+1:m))
+        j = ij(1)+rank
       end do
       if (present(per)) then
         per = piv
@@ -1081,6 +1151,7 @@ Module ModMtrx
         ABout = AB
       end if
       if (present(cout)) then
+        where(c%d < 0) c%d = 0
         cout = c
       end if
     end
@@ -1359,16 +1430,17 @@ Module ModMtrx
       end if
     end
     
-    subroutine mtrx_dominantr(this, t, r, l, per, steps, maxstepsin, AIout, ABout, ABin, cin, roin)
+    !ABin and ABout are l rows of size n.
+    subroutine mtrx_dominantr(this, t, r, l, per, steps, maxsteps, AIout, ABout, ABin, cin, rho)
       Class(Mtrx) :: this
       Type(IntVec), intent(inout), optional :: per
       Integer(4), intent(in) :: t, r, l
       Integer(4), intent(out), optional :: steps
-      Integer(4), intent(in), optional :: maxstepsin
+      Integer(4), intent(in), optional :: maxsteps
       Type(Mtrx), intent(out), optional :: AIout, ABout
-      Type(Mtrx), optional :: ABin
-      Type(Vector), optional :: cin
-      Double precision, intent(in), optional :: roin
+      Type(Mtrx), intent(in), optional :: ABin
+      Type(Vector), intent(in), optional :: cin
+      Double precision, intent(in), optional :: rho
       Type(Mtrx) da, db
       Type(Vector) c, w
       Type(Mtrx) AB, AI, B
@@ -1377,27 +1449,27 @@ Module ModMtrx
       Integer(4) info
       Integer(4) ij(2), i1, j1, i
       DOUBLE PRECISION ro, maxro, l1, abij, wi
-      Integer(4) cursteps, maxsteps
+      Integer(4) cursteps, maxsteps_
       Type(Vector) c3, c4, c1l1, abj, aig, aii, abi
       Type(Vector) v, vaig
       Double precision anorm
       
       anorm = this%fnorm()
-      if (t .eq. 1) then
+      if (t == 1) then
         da = .T.(this%subarray(r, l))
         db = .T.(this%subarray(this%n, l, r+1, 1))
       else
         da = this%subarray(l, r)
         db = this%subarray(l, this%m, 1, r+1)
       end if
-      if (present(roin)) then
-        maxro = roin
+      if (present(rho)) then
+        maxro = rho
       else
         maxro = 1.0d0
       end if
       if (present(ABin)) then
         AI = ABin%subarray(r, r)
-        AB = ABin%subarray(r, this%m, 1, r+1)
+        AB = ABin%subarray(r, db%m + r, 1, r+1)
       else
         call da%qr(q, AI)
         B = (.T.q) * db
@@ -1405,8 +1477,8 @@ Module ModMtrx
         call dtrtri('U', 'N', r, AI%d, r, info)
       end if
       if (present(cin)) then
-        call c%init(this%m-r)
-        c%d(1:this%m-r) = cin%d(r+1:this%m)
+        call c%init(db%m)
+        c%d(1:db%m) = cin%d(r+1:db%m + r)
       else
         c = (evec(l) * (db .dot. db)) - (evec(r) * (B .dot. B))
       end if
@@ -1421,12 +1493,13 @@ Module ModMtrx
       j1 = ij(2)
       ro = sign(sqrt(B%d(i1,j1)),AB%d(i1,j1))
       cursteps = 0
-      maxsteps = 2*r
-      if (present(maxstepsin)) then
-        maxsteps = maxstepsin
+      if (present(maxsteps)) then
+        maxsteps_ = maxsteps
+      else
+        maxsteps_ = 2*r
       end if
       
-      do while ((abs(ro) > maxro) .and. (cursteps < maxsteps))
+      do while ((abs(ro) > maxro) .and. (cursteps < maxsteps_))
         !Initialization of variables
         abij = AB%d(i1,j1)
         l1 = sqrt(c%d(j1))
@@ -1689,92 +1762,86 @@ Module ModMtrx
       end if
     end
     
-    subroutine mtrx_permrows(this, per, t, kin)
+    subroutine mtrx_permrows(this, per, t, k)
       Class(Mtrx) :: this
       Type(Mtrx) mat
       Type(IntVec), intent(in) :: per
-      Integer(4) n, m, i, j
       Integer(4), intent(in) :: t
-      Integer(4), intent(in), optional :: kin
-      Integer(4) k
-      Real(8) tmpr
+      Integer(4), intent(in), optional :: k !Only first k rows are permuted
+      Integer(4) n, m, i, j
+      Integer(4) k_
+      Double precision tmpr
       Integer(4) tmpi
       n = this%n
       m = this%m
-      k = n
-      if (present(kin)) then
-        k = kin
+      if (present(k)) then
+        k_ = k
+      else
+        k_ = n
       end if
       if (per%n .ne. n) then
         print *, "error in perm_rows_mtrx", per%n, n
-        return
+        stop
       end if
       call mat%init(n,m)
-      do i = 1, k
+      do i = 1, k_
         tmpi = per%d(i)
         if (t == 1) then
-          do j = 1, m
-            tmpr = mat%d(i,j)
-            mat%d(i,j) = this%d(tmpi,j)
-            if (tmpi > k) then
+          if (tmpi > k_) then
+            do j = 1, m
+              tmpr = mat%d(i,j)
+              mat%d(i,j) = this%d(tmpi,j)
               this%d(tmpi,j) = tmpr
-            end if
-          end do
+            end do
+          else
+            mat%d(i,1:m) = this%d(tmpi,1:m)
+          end if
         else
-          do j = 1, m
-            mat%d(tmpi,j) = this%d(i,j)
-          end do
+          mat%d(tmpi,1:m) = this%d(i,1:m)
         end if
       end do
-      do j = 1, m
-        do i = 1, k
-          this%d(i, j) = mat%d(i, j)
-        end do
-      end do
+      this%d(1:k_,1:m) = mat%d(1:k_,1:m)
       call mat%deinit()
     end
     
-    subroutine mtrx_permcols(this, per, t, kin)
+    subroutine mtrx_permcols(this, per, t, k)
       Class(Mtrx) :: this
       Type(Mtrx) mat
       Type(IntVec), intent(in) :: per
-      Integer(4) n, m, i, j, k
       Integer(4), intent(in) :: t
-      Integer(4), intent(in), optional :: kin
-      Real(8) tmpr
+      Integer(4), intent(in), optional :: k !Only first k columns are permuted
+      Integer(4) n, m, i, j, k_
+      Double precision tmpr
       Integer(4) tmpi
       n = this%n
       m = this%m
-      k = m
-      if (present(kin)) then
-        k = kin
+      if (present(k)) then
+        k_ = k
+      else
+        k_ = m
       end if
       if (per%n .ne. m) then
         print *, "error in perm_cols_mtrx", per%n, m
-        return
+        stop
       end if
       call mat%init(n,m)
-      do i = 1, k
+      do i = 1, k_
         tmpi = per%d(i)
         if (t == 1) then
+          if (tmpi > k_) then
           do j = 1, n
             tmpr = mat%d(j,i)
             mat%d(j,i) = this%d(j,tmpi)
-            if (tmpi > k) then
-              this%d(j, tmpi) = tmpr
-            end if
+            this%d(j, tmpi) = tmpr
           end do
+          else
+            mat%d(1:n,i) = this%d(1:n,tmpi)
+          end if
         else
-          do j = 1, n
-            mat%d(j,tmpi) = this%d(j,i)
-          end do
+          mat%d(1:n,tmpi) = this%d(1:n,i)
         end if
       end do
-      do j = 1, k
-        do i = 1, n
-          this%d(i, j) = mat%d(i, j)
-        end do
-      end do
+      this%d(1:n, 1:k_) = mat%d(1:n, 1:k_)
       call mat%deinit()
     end
     
@@ -1783,13 +1850,14 @@ Module ModMtrx
       Class(Mtrx), intent(in) :: this
       Integer(4), intent(in), optional :: rank
       Type(Mtrx) :: u, s, v
+      Type(Vector) tau
       DOUBLE PRECISION res
       Integer(4) n, i
       if (.not. present(rank)) then
-        if (this%n > this%m) then !replace with halfqr and halflq
-          call this%qr(u, s)
+        if (this%n > this%m) then
+          call this%halfqr(u, tau, s)
         else
-          call this%lq(s,u)
+          call this%halflq(s, tau, u)
         end if
         n = min(this%n, this%m)
       else
@@ -1852,40 +1920,40 @@ Module ModMtrx
     
     !Would be good to enable permutations as input
     !Or create another subroutine (same name?) for that
-    function mtrx_subarray(this, n, m, k, l) Result(res)
+    function mtrx_subarray(this, n2, m2, n1, m1) Result(res)
       Class(Mtrx), intent(in) :: this
-      Integer(4), intent(in) :: n, m
-      Integer(4), intent(in), optional :: k, l
-      Integer(4) n1, m1
+      Integer(4), intent(in) :: n2, m2
+      Integer(4), intent(in), optional :: n1, m1
+      Integer(4) n1_, m1_
       Type(Mtrx) res
-      if ((.not. present(k)) .or. (.not. present(l))) then
-        n1 = 1
-        m1 = 1
+      if ((present(n1)) .and. (present(m1))) then
+        n1_ = n1
+        m1_ = m1
       else
-        n1 = k
-        m1 = l
+        n1_ = 1
+        m1_ = 1
       end if
-      res%n = n - n1 + 1
-      res%m = m - m1 + 1
+      res%n = n2 - n1_ + 1
+      res%m = m2 - m1_ + 1
       Allocate(res%d(res%n,res%m))
-      res%d = this%d(n1:n,m1:m)
+      res%d(:,:) = this%d(n1_:n2,m1_:m2)
     end
     
-    function mtrx_subcol(this, cols) Result(res)
+    function mtrx_subcol(this, n2, n1) Result(res)
       Class(Mtrx), intent(in) :: this
-      Type(Vector), intent(in) :: cols
-      Type(Mtrx) :: res
-      Integer(4) i, j
-      call res%init(this%n, cols%n)
-      if (cols%n <= this%m) then
-        do j = 1, res%m
-          do i = 1, res%n
-            res%d(i, j) = this%d(i, floor(cols%d(j)+0.5d0))
-          end do
-        end do
+      Integer(4), intent(in) :: n2
+      Integer(4), intent(in), optional :: n1
+      Integer(4) n1_
+      Type(Mtrx) res
+      if (present(n1)) then
+        n1_ = n1
       else
-        print *, "error subcolumn_mtrx", this%n, this%m, cols%n
+        n1_ = 1
       end if
+      res%n = this%n
+      res%m = n2 - n1_ + 1
+      Allocate(res%d(res%n,res%m))
+      res%d(:,:) = this%d(:,n1_:n2)
     end
   
     subroutine mtrx_svd(this, u, s, vt)
@@ -1921,6 +1989,66 @@ Module ModMtrx
         !call backtrace()
         stop
       end if
+    end
+    
+    subroutine mtrx_svdv(this, u, s, vt)
+      Class(Mtrx) :: this
+      Type(Mtrx), intent(out) :: u
+      Type(Vector), intent(out) :: s
+      Type(Mtrx), intent(out) :: vt
+      DOUBLE PRECISION, Allocatable :: ds(:), da(:,:)
+      DOUBLE PRECISION, Allocatable :: work(:)
+      Integer(4) Lwork, info
+      Integer(4) n, m, i, j
+      n = this%n
+      m = this%m
+      Lwork = 5 * (m + n)
+      Allocate(work(Lwork))
+      Allocate(da(n, m))
+      Allocate(ds(n))
+      do j = 1, m
+        do i = 1, n
+          da(i, j) = this%d(i, j)
+        end do
+      end do
+      call u%init(n, n)
+      call s%init(min(m,n))
+      call vt%init(m, m)
+      call dgesvd('A', 'A', n, m, da, n, ds, u%d, n, vt%d, m, work, Lwork, info)
+      Deallocate(work)
+      Deallocate(da)
+      s%d(:s%n) = ds(:s%n)
+      Deallocate(ds)
+      if (info .ne. 0) then
+        print *, "error svd_mtrx", info
+        !call backtrace()
+        stop
+      end if
+    end
+    
+    subroutine mtrx_svdr(this, r, u, v)
+      Class(Mtrx) :: this
+      Integer(4), intent(in) :: r
+      Type(Mtrx), intent(out) :: u, v
+      
+      Type(Vector) s
+      Integer(4) i, n, m
+      
+      n = this%n
+      m = this%m
+      
+      call this%svd(u, s, v)
+      if (n <= m) then
+        do i = 1, r
+          u%d(:,i) = u%d(:,i)*s%d(i)
+        end do
+      else
+        do i = 1, r
+          v%d(i,:) = v%d(i,:)*s%d(i)
+        end do
+      end if
+      u = u%subarray(n,r)
+      v = v%subarray(r,m)
     end
     
     function mtrx_rtsolve(this, b) Result(res)
@@ -2063,30 +2191,30 @@ Module ModMtrx
       end if
     end
     
-    function mtrx_multq(this, q, tau, qp, qf, qtin) Result(res)
+    function mtrx_multq(this, q, tau, qp, qf, qt) Result(res)
       Class(Mtrx), intent(in) :: this
       Type(Mtrx), intent(in) :: q
       Type(Vector), intent(in) :: tau
       Character, intent(in) :: qp, qf
-      Character, intent(in), optional :: qtin
+      Character, intent(in), optional :: qt
       Type(Mtrx) :: res
       DOUBLE PRECISION, Allocatable :: work(:)
-      Character qt
+      Character qt_
       Integer(4) Lwork, info
-      if (present(qtin)) then
-        qt = 'T'
+      if (present(qt)) then
+        qt_ = 'T'
       else
-        qt = 'N'
+        qt_ = 'N'
       endif
       if (qp == 'L') then
-        if (qt == 'N') then
+        if (qt_ == 'N') then
           res%n = q%n
         else
           res%n = q%m
         end if
         res%m = this%m
       else
-        if (qt == 'N') then
+        if (qt_ == 'N') then
           res%m = q%m
         else
           res%m = q%n
@@ -2098,9 +2226,9 @@ Module ModMtrx
       Lwork = 5 * (this%m + this%n)
       Allocate(work(Lwork))
       if (qf == 'U') then
-        call dormlq(qp, qt, res%n, res%m, tau%n, q%d, q%n, tau%d, res%d, res%n, work, Lwork, info)
+        call dormlq(qp, qt_, res%n, res%m, tau%n, q%d, q%n, tau%d, res%d, res%n, work, Lwork, info)
       else if (qf == 'D') then
-        call dormqr(qp, qt, res%n, res%m, tau%n, q%d, q%n, tau%d, res%d, res%n, work, Lwork, info)
+        call dormqr(qp, qt_, res%n, res%m, tau%n, q%d, q%n, tau%d, res%d, res%n, work, Lwork, info)
       else
         print *, 'Wrong mult_q parameter (U,D)', qf
         stop
@@ -2591,91 +2719,110 @@ Module ModMtrx
       Type(Mtrx) :: U, V
       DOUBLE PRECISION r1
       if (present(r)) then
-      call U%init(n, r)
-      call V%init(r, m)
-      do j = 1, r
-        do i = 1, n
-          call random_number(r1)
-          r1 = r1 * 2 - 1
-          U%d(i, j) = r1
+        call U%init(n, r)
+        call V%init(r, m)
+        do j = 1, r
+          do i = 1, n
+            call random_number(r1)
+            r1 = r1 * 2 - 1
+            U%d(i, j) = r1
+          end do
         end do
-      end do
-      do j = 1, m
-        do i = 1, r
-          call random_number(r1)
-          r1 = r1 * 2 - 1
-          V%d(i, j) = r1
-        enddo
-      enddo
-      U = U * V
-      call V%deinit()
+        do j = 1, m
+          do i = 1, r
+            call random_number(r1)
+            r1 = r1 * 2 - 1
+            V%d(i, j) = r1
+          end do
+        end do
+        U = U * V
+        call V%deinit()
       else
         this%n = n
         this%m = m
         call U%init(n, m)
         do j = 1, m
-        do i = 1, n
-          call random_number(r1)
-          !r1 = r1 * 2 - 1
-          U%d(i, j) = r1
+          do i = 1, n
+            call random_number(r1)
+            !r1 = r1 * 2 - 1
+            U%d(i, j) = r1
+          end do
         end do
-      end do
       end if
       this%n = n
       this%m = m
       this%d = U%d
     end
     
-    subroutine mtrx_gauss(this, n, m1)
+    subroutine mtrx_gauss(this, n, m)
       Class(Mtrx) :: this
       Type(Vector),Allocatable :: vd(:)
       Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: m1
-      Integer(4) m, i, j
-      if (.not. present(m1)) then
-        m = n
+      Integer(4), intent(in), optional :: m
+      Integer(4) m_, i, j
+      if (present(m)) then
+        m_ = m
       else
-        m = m1
+        m_ = n
       endif
-      Allocate(vd(m))
-      do i = 1, m
+      Allocate(vd(m_))
+      do i = 1, m_
         call vd(i)%random(n, 1)
       end do
-      call this%init(n, m)
-      do j = 1, m
-        do i = 1, n
-          this%d(i, j) = vd(j)%d(i)
-        end do
+      call this%init(n, m_)
+      do j = 1, m_
+        this%d(1:n, j) = vd(j)%d(1:n)
       end do
     end
   
-    subroutine mtrx_random(this, n, m1)
+    subroutine mtrx_random(this, n, m)
       Class(Mtrx) :: this
       Type(Mtrx) vdd, r
       Type(Vector),Allocatable :: vd(:)
       Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: m1
-      Integer(4) m, i, j
-      if (.not. present(m1)) then
-        m = n
+      Integer(4), intent(in), optional :: m
+      Integer(4) m_, i, j
+      if (present(m)) then
+        m_ = m
       else
-        m = m1
+        m_ = n
       endif
-      Allocate(vd(m))
-      do i = 1, m
+      Allocate(vd(m_))
+      do i = 1, m_
         call vd(i)%random(n)
       end do
-      call vdd%init(n, m)
-      do j = 1, m
-        do i = 1, n
-          vdd%d(i, j) = vd(j)%d(i)
-        end do
+      call vdd%init(n, m_)
+      do j = 1, m_
+        vdd%d(1:n, j) = vd(j)%d(1:n)
       end do
       call vdd%qr(this, r)
-      do i = 1, m
+      do i = 1, m_
         call vd(i)%deinit()
       end do
       Deallocate(vd)
+    end
+    
+    subroutine mtrx_randsvd(this, n, m, vec)
+      Class(Mtrx) :: this
+      Integer(4), intent(in) :: n, m
+      Type(Vector), intent(in) :: vec
+      
+      Type(Mtrx) U, V
+      
+      this%n = n
+      this%m = m
+      Allocate(this%d(n,m))
+      if (n > m) then
+        call V%random(n,m)
+        call U%random(m)
+        U = vec .dot. U
+      else
+        call V%random(m,n)
+        V = .T.V
+        call U%random(n)
+        U = U .dot. vec
+      end if
+      call dgemm('N', 'N', U%n, V%m, U%m, 1.0d0, U%d, U%n, V%d, V%n, 0.0d0, this%d, U%n)
     end
     
     function Mtrx_tovec(this) Result(res)
@@ -2716,7 +2863,7 @@ Module ModMtrx
         Deallocate(this%d)
       end if
       Allocate(this%d(n, m))
-      this%d = 0
+      this%d(:,:) = 0
     end
     
     subroutine Mtrx_set(this, d)
@@ -2946,16 +3093,11 @@ Module ModMtrx
       res%n = this%n
       res%m = this%m
       Allocate(res%d(res%n, res%m))
-      !if (this%n == v%n) then
-        do i = 1, this%m
-          res%d(:,i) = this%d(:,i) * v%d(:)
-        end do
-      !else
-      !  print *, "error dotvec_mtrx"
-      !endif
+      do i = 1, this%n
+        res%d(i,:) = this%d(i,:) * v%d(:)
+      end do
     end
     
-    !UNTESTED: FAILS ON SVD
     elemental function mtrx_dotvect(v, this) Result(res)
       Type(Vector), intent(in) :: v
       Type(Mtrx), intent(in) :: this
@@ -2964,13 +3106,9 @@ Module ModMtrx
       res%n = this%n
       res%m = this%m
       Allocate(res%d(res%n, res%m))
-      !if (this%n == v%n) then
-        do i = 1, this%n
-          res%d(i,:) = this%d(i,:) * v%d(:)
-        end do
-      !else
-      !  print *, "error dotvec_mtrx"
-      !endif
+      do i = 1, this%m
+        res%d(:,i) = this%d(:,i) * v%d(:)
+      end do
     end
     
     elemental function mtrx_ddvec(this, v) Result(res)
@@ -2981,16 +3119,11 @@ Module ModMtrx
       res%n = this%n
       res%m = this%m
       Allocate(res%d(res%n, res%m))
-      !if (this%n == v%n) then
-        do i = 1, this%m
-          res%d(:,i) = this%d(:,i) / v%d(:)
-        end do
-      !else
-      !  print *, "error ddvec_mtrx"
-      !endif
+      do i = 1, this%n
+        res%d(i,:) = this%d(i,:) / v%d(:)
+      end do
     end
     
-    !UNTESTED
     elemental function mtrx_ddvect(v, this) Result(res)
       Type(Vector), intent(in) :: v
       Type(Mtrx), intent(in) :: this
@@ -2999,13 +3132,9 @@ Module ModMtrx
       res%n = this%n
       res%m = this%m
       Allocate(res%d(res%n, res%m))
-      !if (this%n == v%n) then
-        do i = 1, this%n
-          res%d(i,:) = this%d(i,:) / v%d(:)
-        end do
-      !else
-      !  print *, "error ddvec_mtrx"
-      !endif
+      do i = 1, this%m
+        res%d(:,i) = this%d(:,i) / v%d(:)
+      end do
     end
     
     elemental function mtrx_dotdiv(this, m2) Result(res)
@@ -3078,22 +3207,9 @@ Module ModMtrx
     elemental function mtrx_transp(this) Result(res)
       Type(Mtrx), intent(in) :: this
       Type(Mtrx) :: res
-      Integer(4) i, j
       res%n = this%m
       res%m = this%n
-      Allocate(res%d(res%n, res%m))
-      !if (size(this%d,1) .ne. this%n) then
-      !  print *, '1', size(this%d,1), this%n
-      !end if
-      !if (size(this%d,2) .ne. this%m) then
-      !  print *, '2', size(this%d,2), this%m
-      !end if
-      do i = 1, this%n
-        do j = 1, this%m
-          res%d(j,i) = this%d(i,j)
-        end do
-      end do
-      !res%d = transpose(this%d(:,:this%m))
+      res%d = transpose(this%d)
     end
     
     elemental function mtrx_sub(this, m2) Result(res)
@@ -3114,7 +3230,7 @@ Module ModMtrx
       Type(Mtrx), intent(in) :: this
       Type(vector) :: res
       res%n = this%n*this%m
-      Allocate(res%d(res%n))
+      !Allocate(res%d(res%n))
       !call res%init(this%n*this%m)
       res%d = reshape(this%d, (/ this%n*this%m /))
     end
@@ -3132,21 +3248,21 @@ Module ModMtrx
     end
     
     !Generates identity matrix (or rectangular with 1 on diagonal)
-    elemental function eye(n, m1) Result(res)
+    elemental function eye(n, m) Result(res)
       Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: m1
+      Integer(4), intent(in), optional :: m
       Type(Mtrx) :: res
-      Integer(4) m, i
-      if (present(m1)) then
-        m = m1
+      Integer(4) m_, i
+      if (present(m)) then
+        m_ = m
       else
-        m = n
+        m_ = n
       end if
       res%n = n
-      res%m = m
-      Allocate(res%d(n,m))
-      res%d = 0
-      do i = 1, min(m,n)
+      res%m = m_
+      Allocate(res%d(n,m_))
+      res%d(:,:) = 0
+      do i = 1, min(m_,n)
         res%d(i,i) = 1.0d0
       end do
     end

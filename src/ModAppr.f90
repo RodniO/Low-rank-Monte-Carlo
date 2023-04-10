@@ -110,9 +110,11 @@ function Acols(Afun, N, r, per1, per2, param) Result(res)
   
   call res%init(N, r)
   do j = 1, r
+    !$OMP PARALLEL DO
     do i = 1, N
       res%d(i,j) = Afun(per1%d(i), per2%d(j), param)
     end do
+    !$OMP END PARALLEL DO
   end do
 end
 
@@ -128,9 +130,11 @@ function Acolst(Afun, N, r, per1, per2, param) Result(res)
   
   call res%init(r, N)
   do j = 1, r
+    !$OMP PARALLEL DO
     do i = 1, N
       res%d(j,i) = Afun(per1%d(i), per2%d(j), param)
     end do
+    !$OMP END PARALLEL DO
   end do
 end
   
@@ -146,9 +150,11 @@ function Arows(Afun, r, N, per1, per2, param) Result(res)
   
   call res%init(r, N)
   do i = 1, r
+    !$OMP PARALLEL DO
     do j = 1, N
       res%d(i,j) = Afun(per1%d(i), per2%d(j), param)
     end do
+    !$OMP END PARALLEL DO
   end do
 end
 
@@ -164,14 +170,16 @@ function Arowst(Afun, r, N, per1, per2, param) Result(res)
   
   call res%init(N, r)
   do j = 1, r
+    !$OMP PARALLEL DO
     do i = 1, N
       res%d(i,j) = Afun(per1%d(j), per2%d(i), param)
     end do
+    !$OMP END PARALLEL DO
   end do
 end
   
 !Simplest CUR approximation with U = \hat A^{-1}
-subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps)
+subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps, CA, pre)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Integer(4), intent(in) :: M, N, rank !Sizes of A and the desired rank
   Type(IntVec) :: per1, per2 !Permutations of rows and columns
@@ -179,16 +187,27 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
   Type(Mtrx), intent(out) :: C !Columns for CUR approximation
   Type(Mtrx), intent(out) :: UR !UR of CUR approximation
   Integer(4), intent(in) :: maxsteps, maxswaps !Maximum number of steps and swaps
+  Type(Mtrx), intent(out), optional :: CA !C*Ahat^{-1}
+  Logical, intent(in), optional :: pre !Run premaxvol? [FALSE]
+  Logical :: pre_
 
+  Type(Mtrx) ABout
   Type(IntVec) peri !Identity permutation
   Type(Mtrx) RT !Transposed rows
   Type(Mtrx) URT !Transposed UR
   Integer(4) swapsmade1, swapsmade2 !Number of swaps in rows and columns
   Integer(4) i
   
+  if (present(pre)) then
+    pre_ = pre
+  else
+    pre_ = .false.
+  end if
+  
   !Initialize identity permutation
   call peri%perm(M)
   
+  swapsmade2 = 1
   !Here we use 'cmaxvol', which is maxvol in columns
   do i = 1, maxsteps
     !Select first r columns
@@ -197,15 +216,41 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
     !when called and does not use any precalculated information.
     !So A is not needed to be stored.
     !Same goes if one wants to modify Arows or Acols.
-    C = Acols(Afun, M, rank, per1, per2, param)
-    !We use column version of maxvol.
-    call C%cmaxvol(per1, swapsmade1, maxswaps)
+    if ((i == 1) .and. (pre_)) then
+      C = Acolst(Afun, M, rank, per1, per2, param)
+      call C%premaxvol(rank, per1, ABout)
+      C = .T.C
+      if (present(CA)) then
+        call C%cmaxvol(per1, swapsmade1, maxswaps, CA, ABin = ABout)
+      else
+        call C%cmaxvol(per1, swapsmade1, maxswaps, ABin = ABout)
+      end if
+    else
+      C = Acols(Afun, M, rank, per1, per2, param)
+      !We use column version of maxvol.
+      if (present(CA)) then
+        call C%cmaxvol(per1, swapsmade1, maxswaps, CA)
+      else
+        call C%cmaxvol(per1, swapsmade1, maxswaps)
+      end if
+    end if
+    !Exit if no swaps were made
+    if (swapsmade1 + swapsmade2 == 0) then
+      exit
+    end if
     
-    !Select first r rows (transposed)
-    RT = Arowst(Afun, rank, N, per1, per2, param)
-    !We again use column version and swap columns
-    !That's why we have 2 instead of 1
-    call RT%cmaxvol(per2, swapsmade2, maxswaps, URT)
+!     if ((i == 1) .and. (pre_)) then
+!       RT = Arows(Afun, rank, N, per1, per2, param)
+!       call RT%premaxvol(rank, per2, ABout)
+!       RT = .T.RT
+!       call RT%cmaxvol(per2, swapsmade2, maxswaps, URT, ABin = .T.ABout)
+!     else
+      !Select first r rows (transposed)
+      RT = Arowst(Afun, rank, N, per1, per2, param)
+      !We again use column version and swap columns
+      !That's why we have 2 instead of 1
+      call RT%cmaxvol(per2, swapsmade2, maxswaps, URT)
+!     end if
     !Exit if no swaps were made
     if (swapsmade1 + swapsmade2 == 0) then
       exit
@@ -220,21 +265,29 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
 end
 
 !Use to increase number of rows and columns after maxvol
-subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR)
+subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR, ca)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Integer(4), intent(in) :: k, l !Increased submatrix sizes
   Type(IntVec) :: per1, per2 !Permutations of rows and columns
   Type(Mtrx), intent(in) :: param !Parameters for Afun
   Type(Mtrx) :: C !Columns for CUR approximation
   Type(Mtrx) :: UR !UR of CUR approximation
+  Logical, intent(in), optional :: ca !C is actually CA?
 
+  Logical :: ca_
   Type(IntVec) peri !Identity permutation
   Integer(4) M, N !Matrix sizes
   Integer(4) rank !Desired rank
   Type(Mtrx) R !Matrix rows
   Type(Mtrx) Ahat !Submatrix \hat A
-  Type(Mtrx) U, S, V !SVD of the submatrix
-  Integer(4) i
+  Type(Mtrx) U, V !SVD of the submatrix
+  Type(Vector) s !Singular values
+  
+  if (present(ca)) then
+    ca_ = ca
+  else
+    ca_ = .false.
+  end if
   
   !Get the unknown sizes from input
   M = C%n
@@ -248,29 +301,31 @@ subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR)
   !that the top left r by r matrix has maximum volume.
   !Here we use already calculated C and A^{-1} R
   !We return back the permutations
-  call C%permrows(per1, 1)
+  if (.not. ca_) then
+    call C%permrows(per1, 1)
+  end if
+  
   call UR%permcols(per2, 1)
   !Can be applied to the entire matrix like A%hmaxvol2 too, if necessary.
-  call C%hmaxvol2(1, rank, k, per1, 0)
+  call C%hmaxvol2(1, rank, k, per1, ca_)
   !2 indicates that we swap columns (1 if rows)
   !1 indicates that our rows are already multiplied be A^-1 (0 if not)
-  call UR%hmaxvol2(2, rank, l, per2, 1)
+  call UR%hmaxvol2(2, rank, l, per2, .true.)
   !We now need to use more rows and columns
   C = Acols(Afun, M, l, peri, per2, param)
   R = Arows(Afun, k, N, per1, per2, param)
   !Moreover, we need to use PROJECTIVE VOLUME
   Ahat = R%subarray(k,l)
-  call Ahat%svd(U, S, V)
+  call Ahat%svd(U, s, V)
   !We use r-pseudoinverse
   U = U%subarray(k,rank)
-  S = S%subarray(rank,rank)
+  s = s%subarray(rank)
   V = V%subarray(rank,l)
-  do i = 1, rank
-    S%d(i,i) = 1.0d0/S%d(i,i)
-  end do
   call R%permcols(per2, 2)
+  C = C*(.T.V)
+  UR = (s .dd. (.T.U))*R
   !Multiplication in stable order
-  UR = ((.T.V)*S) * ((.T.U)*R)
+  !UR = ((.T.V)*S) * ((.T.U)*R)
 end
 
 !CUR with arbitrary number of rows and columns
@@ -289,53 +344,103 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   Type(IntVec) peri !Dummy permutation
   Type(Mtrx) R !Matrix rows
   Type(Mtrx) Ahat !Submatrix \hat A
-  Type(Mtrx) U, S, V !SVD of the submatrix
+  Type(Mtrx) U, V !SVD of the submatrix
+  Type(Vector) s !Singular values
   Integer(4) swapsmade1, swapsmade2 !Number of swaps in rows and columns
   Integer(4) i
+  
+  Type(Mtrx) ABout
+  Type(Vector) cout
+  
+  !Type(Mtrx) Q1
+  !Type(Vector) tau1
 
   !We do essentially the same we have been doing with 'cmaxvol',
   !but now we use 'dominantc' and 'dominantr'
 
+  swapsmade2 = 1
   !maxvol-rect of size k x r: find k good rows
   do i = 1, maxsteps
     R = Arows(Afun, k, N, per1, per2, param)
-    call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
-    C = Acols(Afun, M, rank, per1, per2, param)
-    !1 for swaps of rows; 0 for no rows explicitly kept unswapped
-    !(first rows can be saved to preserve the r x r dominant submatrix)
-    call C%dominantc(1, rank, k, 0, per1, per2, swapsmade2, maxswaps)
+    if (i == 1) then
+      call R%premaxvol(rank, per2, ABout, cout)
+      call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+    else
+      call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
+    end if
+    if (swapsmade1 + swapsmade2 == 0) then
+      exit
+    end if
+!     if (i == 1) then
+!       C = Acolst(Afun, M, rank, per1, per2, param)
+!       call C%premaxvol(rank, per1)
+!       C = .T.C
+!       !Apply hmaxvol2, use Q as output
+!       call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
+!     else
+      C = Acols(Afun, M, rank, per1, per2, param)
+      !1 for swaps of rows; 0 for no rows explicitly kept unswapped
+      !(first rows can be saved to preserve the r x r dominant submatrix)
+      call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
+!     end if
     if (swapsmade1 + swapsmade2 == 0) then
       exit
     end if
   end do
   !We save per1 and work in the copy
   call peri%copy(per1)
+  swapsmade2 = 1
   !maxvol-rect of size r x l: find l good columns
   do i = 1, maxsteps
-    C = Acols(Afun, M, l, peri, per2, param)
-    call C%dominantr(1, rank, l, peri, swapsmade1, maxswaps)
+    if (i == 1) then
+      C = Acolst(Afun, M, l, peri, per2, param)
+      call C%premaxvol(rank, peri, ABout, cout)
+      call C%dominantr(2, rank, l, peri, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+    else
+      C = Acols(Afun, M, l, peri, per2, param)
+      call C%dominantr(1, rank, l, peri, swapsmade1, maxswaps)
+    end if
+    if (swapsmade1 + swapsmade2 == 0) then
+      exit
+    end if
     R = Arows(Afun, rank, N, peri, per2, param)
-    call R%dominantc(2, rank, l, 0, peri, per2, swapsmade2, maxswaps)
+!     if (i == 1) then
+!       call R%premaxvol(rank, per2)
+!       !Apply hmaxvol2, use Q as output
+!       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
+!     else
+      call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
+!     end if
     if (swapsmade1 + swapsmade2 == 0) then
       exit
     end if
   end do
   !Return peri to identity permutation
   call peri%deinit()
-  call peri%perm(M)
+  
+!Inverse through SVD of columns C: improve is not observable (need column diagram to see the difference)
+!   call peri%perm(N)
+!   C = Acols(Afun, M, l, per1, per2, param)
+!   R = Arows(Afun, k, N, per1, peri, param)
+!   call C%halfqr(Q1, tau1, Ahat)
+!   call Ahat%svdr(rank, U, V)
+!   C = U%multq(Q1, tau1, 'L', 'D')
+!   Ahat = C%subarray(k, rank)
+!   call C%permrows(per1, 2)
+!   UR = Ahat .Id. R
+  
   !Projective volume business like in maxvol2
+  call peri%perm(M)
   C = Acols(Afun, M, l, peri, per2, param)
   R = Arows(Afun, k, N, per1, per2, param)
   Ahat = R%subarray(k,l)
-  call Ahat%svd(U, S, V)
+  call Ahat%svd(U, s, V)
   U = U%subarray(k,rank)
-  S = S%subarray(rank,rank)
+  s = s%subarray(rank)
   V = V%subarray(rank,l)
-  do i = 1, rank
-    S%d(i,i) = 1.0d0/S%d(i,i)
-  end do
   call R%permcols(per2, 2)
-  UR = ((.T.V)*S) * ((.T.U)*R)
+  C = C*(.T.V)
+  UR = (s .dd. (.T.U))*R
 end
 
 !Truncated SVD on CUR
@@ -355,7 +460,8 @@ subroutine TruncateCUR(C, UR, new_rank, err_bound, trunc_err)
   Type(Mtrx) R1, L2 !Upper triangular and lower triangular matrices from QR and LQ
   Type(Mtrx) Q1, Q2 !Q-factors for QR and LQ
   Type(Vector) tau1, tau2 !Information about Q1 and Q2
-  Type(Mtrx) U, S, V !For SVD
+  Type(Mtrx) U, V !For SVD
+  Type(Vector) s !Singular values
   Type(Mtrx) M !Just a temporary matrix
   Integer(4) i
 
@@ -375,19 +481,15 @@ subroutine TruncateCUR(C, UR, new_rank, err_bound, trunc_err)
   
   M = R1*L2
   
-  call M%svd(U, S, V)
+  call M%svd(U, s, V)
   do i = 1, rank
-    if (S%d(i,i) <= tau) then
+    if (s%d(i) <= tau) then
       rank = i-1
       exit
     end if
   end do
   if (present(trunc_err)) then
-    trunc_err = 0
-    do i = rank+1, k
-      trunc_err = trunc_err + S%d(i,i)**2
-    end do
-    trunc_err = sqrt(trunc_err)
+    trunc_err = norm2(s%d(rank+1:k))
   end if
   
   !Exit if no truncation needed
@@ -397,37 +499,39 @@ subroutine TruncateCUR(C, UR, new_rank, err_bound, trunc_err)
   
   !Multiply Q1 and Q2 by svd factors to get new approximation
   U = U%subarray(k, rank)
-  V = S%subarray(rank, rank) * V%subarray(rank, k)
+  V = s%subarray(rank) .dot. V%subarray(rank, k)
   C = U%multq(Q1, tau1, 'L', 'D')
   UR = V%multq(Q2, tau2, 'R', 'U')
 end
 
 !Alternating projections for nonnegative matrix approximation
 !with truncated SVD replaced by CUR
-subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult, C, AR, verbose)
+subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, C, AR, verbose)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Type(Mtrx), intent(in) :: param !Parameters for Afun
   Integer(4), intent(in) :: M, N, rank !Sizes of A and the desired rank
   Integer(4) :: k2, k3 !Submatrix sizes for TSVD and projective volume
   Double precision, intent(in) :: minelem !Desired minimum matrix element
-  Double precision, intent(in), optional :: maxelemin !Desired minimum matrix element
+  Double precision, intent(in), optional :: maxelem !Desired minimum matrix element
   Double precision, intent(in) :: epsmult !Error multiplicator for shift calculation
   Type(Mtrx), intent(out) :: C, AR !Output aprroximation of rank "rank"
   Integer(4), intent(in) :: verbose !0-2; how much to print.
   
+  Type(Mtrx) C1 !To speed up maxvol2, we save C \hat A^{-1} in C, so C1 is dummy for C
   Integer(4) maxsteps, maxswaps
   Type(IntVec) peri, peri2, per1, per2
-  Type(Mtrx) R1, L2, R, U, S, V, Ahat, Q1, Q2, param_uv, EU, EV
+  Type(Mtrx) R1, L2, R, U, V, Ahat, Q1, Q2, param_uv, EU, EV
+  Type(Vector) s
   Integer(4) i, j, steps, cur, bads
-  Double precision eps2, badstot, maxelem, elem, epsmin, tmp
+  Double precision eps2, badstot, maxelem_, elem, epsmin, tmp
   Type(Vector) tau, tau2
   
   Double precision normf
   
-  if (present(maxelemin)) then
-    maxelem = maxelemin
+  if (present(maxelem)) then
+    maxelem_ = maxelem
   else
-    maxelem = minelem
+    maxelem_ = minelem
   end if
   
   !Maximum number of steps for maxvol
@@ -451,25 +555,25 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
   Ahat = .T.(R%subarray(k3,k2))
   call Ahat%premaxvol(k2, per1)
   
-  call maxvol(Afun, M, N, k2, per1, per2, param, C, AR, maxsteps, maxswaps)
-  call maxvol2(Afun, k3, k3, per1, per2, param, C, AR)
+  call maxvol(Afun, M, N, k2, per1, per2, param, C1, AR, maxsteps, maxswaps, C)
+  call maxvol2(Afun, k3, k3, per1, per2, param, C, AR, .true.)
   
   C = Acols(Afun, M, k3, peri, per2, param)
   R = Arows(Afun, k3, N, per1, per2, param)
   Ahat = R%subarray(k3,k3)
-  call Ahat%svd(U, S, V)
+  call Ahat%svd(U, s, V)
   cur = k2
   do i = k3, 1, -1
-    if (((S%d(i,i) > eps*k3*S%d(1,1)) .or. (i <= rank)) .and. (i <= k2)) then
-      S%d(i,i) = 1.0d0/S%d(i,i)
+    if (((s%d(i) > eps*k3*s%d(1)) .or. (i <= rank)) .and. (i <= k2)) then
+      s%d(i) = 1.0d0/s%d(i)
     else
-      S%d(i,i) = 0
+      s%d(i) = 0
       cur = i-1
     end if
   end do
   call R%permcols(per2, 2)
   U = U%subarray(k3,cur)
-  V = S%subarray(cur,cur)*V%subarray(cur,k3)
+  V = s%subarray(cur) .dot. V%subarray(cur,k3)
   C = C*(.T.V)
   AR = (.T.U)*R
   
@@ -477,27 +581,18 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
     call C%halfqr(Q1, tau, R1)
     call AR%halflq(L2, tau2, Q2)
     Ahat = R1*L2
-    call Ahat%svd(U, S, V)
-    normf = 0
-    do i = 1, rank
-      normf = normf + S%d(i,i)**2
-    end do
-    normf = sqrt(normf)
+    call Ahat%svd(U, s, V)
     U = U%subarray(cur, rank)
-    V = S%subarray(rank, rank) * V%subarray(rank, cur)
+    V = s%subarray(rank) .dot. V%subarray(rank, cur)
     C = U%multq(Q1, tau, 'L', 'D')
     AR = V%multq(Q2, tau2, 'R', 'U')
   else
     call C%halfqr(Q1, tau, R1)
     call AR%halflq(L2, tau2, Q2)
     Ahat = R1*L2
-    call Ahat%svd(U, S, V)
-    normf = 0
-    do i = 1, rank
-      normf = normf + S%d(i,i)**2
-    end do
-    normf = sqrt(normf)
+    call Ahat%svd(U, s, V)
   end if
+  normf = norm2(s%d(1:rank))
   
   call param_uv%init(max(M,N),2*rank+1)
   do i = 1, rank
@@ -509,7 +604,7 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
     end do
   end do
   param_uv%d(1,2*rank+1) = minelem
-  param_uv%d(2,2*rank+1) = maxelem
+  param_uv%d(2,2*rank+1) = maxelem_
   
   call EU%init(M,rank*2)
   call EV%init(N,rank*2)
@@ -540,19 +635,19 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
     R = Arows(Afun_uvmod, k3, N, per1, per2, param_uv)
     
     Ahat = R%subarray(k3,k3)
-    call Ahat%svd(U, S, V)
+    call Ahat%svd(U, s, V)
     !Replace sqrt(eps) with eps? It got bad errors sometimes, but can't find why and when.
     do i = k3, 1, -1
-      if (((S%d(i,i) > eps*k3*S%d(1,1)) .or. (i <= rank+1)) .and. (i <= k2)) then
-        S%d(i,i) = 1.0d0/S%d(i,i)
+      if (((s%d(i) > eps*k3*s%d(1)) .or. (i <= rank+1)) .and. (i <= k2)) then
+        s%d(i) = 1.0d0/s%d(i)
       else
-        S%d(i,i) = 0
+        s%d(i) = 0
         cur = i
       end if
     end do
     call R%permcols(per2, 2)
     U = U%subarray(k3,cur)
-    V = S%subarray(cur,cur)*V%subarray(cur,k3)
+    V = s%subarray(cur) .dot. V%subarray(cur,k3)
     C = C*(.T.V)
     AR = (.T.U)*R
   
@@ -567,7 +662,7 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
       end do
     end do
     param_uv%d(1,2*rank+1) = minelem+eps2
-    param_uv%d(2,2*rank+1) = maxelem-eps2
+    param_uv%d(2,2*rank+1) = maxelem_-eps2
   
     if (epsmin == 0.0d0) then
       do i = 1, rank
@@ -599,7 +694,7 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
       R = C*AR%subarray(rank, per2%d(j), 1, per2%d(j))
       do i = 1, M
         elem = R%d(per1%d(i),1)
-        if ((elem < minelem) .or. ((elem > maxelem) .and. (maxelem .ne. minelem))) then
+        if ((elem < minelem) .or. ((elem > maxelem_) .and. (maxelem_ .ne. minelem))) then
           bads = bads + 1
           exit
         end if
@@ -609,9 +704,9 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelemin, epsmult
       end if
     end do
     if ((bads == 0) .or. (steps > 200)) then
-      S = Arows(Afun, M, N, peri, peri2, param)
-      U = S - C*AR
-      U = U*(1.0d0/S%fnorm())
+      Ahat = Arows(Afun, M, N, peri, peri2, param)
+      U = Ahat - C*AR
+      U = U*(1.0d0/Ahat%fnorm())
       exit
     end if
     

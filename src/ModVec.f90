@@ -100,9 +100,9 @@ Module ModVec
       Integer(4), intent(in) :: a, b
       DOUBLE PRECISION tmp
       if ((a > this%n) .or. (b > this%n)) then
-        print *, "error in swap_vec"
+        print *, "error in swap_vec", a, b, this%n
         !call backtrace()
-        return
+        stop
       end if
       tmp = this%d(a)
       this%d(a) = this%d(b)
@@ -111,22 +111,26 @@ Module ModVec
     
     function vec_shift(this, sh, start) Result(res)
       Class(Vector) :: this
-      Integer(4), intent(in) :: sh
-      Integer(4), optional :: start
-      Type(Vector) :: res
+      Integer(4), intent(in) :: sh !Shift size (can be negative)
+      Integer(4), optional :: start !Shift starts at this index [default 1]
+      Type(Vector) :: res !Shifted vector, with zeros in the beginning (for sh > 0)
+      Integer(4) start_
       Integer(4) i
-      if (.not. present(start)) start = 1
+      start_ = 1
+      if (present(start)) then
+        start_ = start
+      end if
       call res%init(this%n)
       if (sh >= 0) then
-        call dcopy(start-1, this%d, 1, res%d, 1)
-        do i = this%n, start+sh, -1
+        call dcopy(start_-1, this%d, 1, res%d, 1)
+        do i = this%n, start_+sh, -1
           res%d(i) = this%d(i-sh)
         end do
       else
-        do i = this%n+sh-start+2, this%n
+        do i = this%n+sh-start_+2, this%n
           res%d(i) = this%d(i)
         end do
-        do i = 1, this%n+sh-start+1
+        do i = 1, this%n+sh-start_+1
           res%d(i) = this%d(i-sh)
         end do
       end if
@@ -256,23 +260,22 @@ Module ModVec
       end do
     end
     
-    !UNTESTED: FAILS ON SVD
     !Would be good to enable permutations as input
     !Or create another subroutine (same name?) for that
-    function Vec_subarray(this, n, k) Result(res)
+    function Vec_subarray(this, n2, n1) Result(res)
       Class(Vector), intent(in) :: this
-      Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: k
-      Integer(4) n1
+      Integer(4), intent(in) :: n2 !End index
+      Integer(4), intent(in), optional :: n1 !Start index
+      Integer(4) n1_
       Type(Vector) res
-      if (.not. present(k)) then
-        n1 = 1
+      if (present(n1)) then
+        n1_ = n1
       else
-        n1 = k
+        n1_ = 1
       end if
-      res%n = n - n1 + 1
+      res%n = n2 - n1_ + 1
       Allocate(res%d(res%n))
-      res%d = this%d(n1:n)
+      res%d(:) = this%d(n1_:n2)
     end
   
     subroutine Vector_constructor(this, n)
@@ -283,7 +286,7 @@ Module ModVec
         Deallocate(this%d)
       end if
       Allocate(this%d(n))
-      this%d = 0
+      this%d(:) = 0
     end
     
     subroutine Vector_destructor(this)
@@ -425,21 +428,18 @@ Module ModVec
       end function
     end subroutine
     
-    !Create vector of ones or vector of standard basis
-    elemental function evec(n, m1) Result(res)
+    !Create vector of ones or k-th vector of standard basis
+    elemental function evec(n, k) Result(res)
       Integer(4), intent(in) :: n
-      Integer(4), intent(in), optional :: m1
+      Integer(4), intent(in), optional :: k
       Type(Vector) :: res
-      Integer(4) i
       res%n = n
       Allocate(res%d(n))
-      res%d = 0
-      if (present(m1)) then
-        res%d(m1) = 1.0d0
+      if (present(k)) then
+        res%d(:) = 0
+        res%d(k) = 1.0d0
       else
-        do i = 1, n
-          res%d(i) = 1.0d0
-        end do
+        res%d(:) = 1.0d0
       end if
     end
     

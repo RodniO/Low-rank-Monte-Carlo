@@ -188,31 +188,32 @@ Module ModSparse
       end do
     end
     
-    function Sparse_detransform(this, k, perm) Result(res)
+    function Sparse_detransform(this, n, perm) Result(res)
       Class(SparseRow) :: this
-      Integer(4), intent(in), optional :: k
+      Integer(4), intent(in), optional :: n !rows
       Type(IntVec), optional :: perm
       Type(Mtrx) :: res
-      Integer(4) m, n, i, j, nz
+      Integer(4) m, n_, i, j, nz
       m = 0
       j = 0
       do i = 1,this%nz
         m = max(m, this%j(i))
       end do
-      n = this%n
-      if (present(k)) then
-        n = k
+      if (present(n)) then
+        n_ = n
+      else
+        n_ = this%n
       end if
-      call res%init(n, m)
+      call res%init(n_, m)
       if (present(perm)) then
-        do i = 1, n
+        do i = 1, n_
           j = perm%d(i)
           do nz = this%i(j), this%i(j+1)-1
             res%d(i, this%j(nz)) = this%d(nz)
           end do
         end do
       else
-        do nz = 1, this%i(n+1)-1
+        do nz = 1, this%i(n_+1)-1
           do while (this%i(j+1) <= nz)
             j = j + 1
           end do
@@ -221,31 +222,32 @@ Module ModSparse
       end if
     end
     
-    function SparseC_detransform(this, k, perm) Result(res)
+    function SparseC_detransform(this, m, perm) Result(res)
       Class(SparseCol) :: this
-      Integer(4), intent(in), optional :: k
+      Integer(4), intent(in), optional :: m !columns
       Type(IntVec), optional :: perm
       Type(Mtrx) :: res
-      Integer(4) m, n, i, j, nz
+      Integer(4) m_, n, i, j, nz
       n = 0
       j = 0
       do i = 1,this%nz
         n = max(n, this%i(i))
       end do
-      m = this%n
-      if (present(k)) then
-        m = k
+      if (present(m)) then
+        m_ = m
+      else
+        m_ = this%n
       end if
-      call res%init(n, m)
+      call res%init(n, m_)
       if (present(perm)) then
-        do i = 1, m
+        do i = 1, m_
           j = perm%d(i)
           do nz = this%j(j), this%j(j+1)-1
             res%d(this%i(nz), i) = this%d(nz)
           end do
         end do
       else
-        do nz = 1, this%j(m+1)-1
+        do nz = 1, this%j(m_+1)-1
           do while (this%j(j+1) <= nz)
             j = j + 1
           end do
