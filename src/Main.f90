@@ -7,6 +7,7 @@ program bubr
   call ExampleB()
   call ExampleP()
   call ExampleR()
+  !call ExampleM()
   !do mt = 1, 4
   !  do i = 0, 20
   !    call reconstruct_test(i*1.0d0, mt)
@@ -19,6 +20,7 @@ include "incfiles/ExampleA.f90"
 include "incfiles/ExampleB.f90"
 include "incfiles/ExampleP.f90"
 include "incfiles/ExampleR.f90"
+include "incfiles/ExampleM.f90"
 
 !Random seed generator
 subroutine init_random_seed()
