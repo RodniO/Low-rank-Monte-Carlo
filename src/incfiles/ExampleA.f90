@@ -103,8 +103,6 @@ subroutine ExampleA()
   print *, 'We discard previous rows and columns'
   print *, '(To illustrate that maxvol-proj can work without initialization)'
   print *, 'And try to construct approximation from random start'
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   
@@ -123,10 +121,8 @@ subroutine ExampleA()
   !RRQR with DOMINANT_R
   print *, 'Finally, we construct Strong Rank Revealing QR with Dominant-R'
   !Let's reinitialize column permutations
-  call per2%deinit()
   call per2%perm(n)
   !and rows
-  call AR%deinit()
   call AR%init(k, n)
   
   time = dsecnd()

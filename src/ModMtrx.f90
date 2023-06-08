@@ -61,6 +61,7 @@ Module ModMtrx
       Procedure :: fbmaxvol => mtrx_fbmaxvol !Gaussian elimination with complete pivoting
       Procedure :: maxvol2 => mtrx_maxvol2 !Original maxvol2 (aka rect_maxvol) [4]
       Procedure :: hmaxvol2 => mtrx_hmaxvol2 !Faster (Householder-based) maxvol2 [1]
+      Procedure :: umaxvol2 => mtrx_umaxvol2 !"Unstable" (not really) version of maxvol2
       Procedure :: hmaxvolold => mtrx_hmaxvolold !Old Householder-based version
       Procedure :: dominantc => mtrx_dominantc !Dominant-C [1]
       Procedure :: premaxvol => mtrx_premaxvol !Pre-maxvol [1]
@@ -533,7 +534,7 @@ Module ModMtrx
           call per%swap(i1+k, cr+k)
         end if
         if (present(addmask)) then
-          call addmask%swap(tin, i1+k, cr+k)
+          call addmask%swap(t, i1+k, cr+k)
         end if
         ls = LB%d(i1)
         LB%d(i1) = LB%d(cr)
@@ -557,11 +558,11 @@ Module ModMtrx
     
     subroutine mtrx_hmaxvol2(this, tin, k, l, per, cin, addmask)
       Class(Mtrx) :: this
-      Type(Mtrx) :: C
+      Type(Mtrx) :: C, Ahat, Q, R
       Type(IntVec), optional :: per
       Logical, optional :: cin
       Type(Mtrx), intent(in), optional :: addmask
-      Type(Vector) :: LB, CI, CJ
+      Type(Vector) :: LB, CI, CJ, tau
       Integer(4), intent(in) :: k, l
       Integer(4), intent(in) :: tin
       Integer(4) t
@@ -588,7 +589,11 @@ Module ModMtrx
         if (cin_) then
           C = this%subarray(n, k, k+1, 1)
         else
-          C = this%subarray(n, k, k+1, 1) .dI. this%subarray(k, k)
+          Ahat = this%subarray(k,k)
+          call Ahat%halfqr(Q, tau, R)
+          C = this%subarray(n, k, k+1, 1)
+          call dtrsm('R', 'U', 'N', 'N', C%n, C%m, 1.0d0, R%d, R%n, C%d, C%n)
+          !C = this%subarray(n, k, k+1, 1) .dI. this%subarray(k, k)
         end if
       else
         t = 2
@@ -596,7 +601,10 @@ Module ModMtrx
         if (cin_) then
           C = .T.this%subarray(k, n, 1, k+1)
         else
-          C = .T.(this%subarray(k, k) .Id. this%subarray(k, n, 1, k+1))
+          Ahat = this%subarray(k, k)
+          call Ahat%halflq(R, tau, Q)
+          C = .T.(R%ltsolve(this%subarray(k, n, 1, k+1)))
+          !C = .T.(this%subarray(k, k) .Id. this%subarray(k, n, 1, k+1))
         end if
       end if
       if (n > 2*k) then
@@ -606,14 +614,14 @@ Module ModMtrx
         LB = (C .dot. C)*evec(k) !Faster if LB has size n < 2*k AND evec is on the right
       end if
       do cr = 1, l-k
-        ij = maxloc(LB%d)
-        i1 = ij(1)
+        ij = maxloc(LB%d(cr:))
+        i1 = ij(1) + cr - 1
         call this%swap(t, i1+k, cr+k)
         if (present(per)) then
           call per%swap(i1+k, cr+k)
         end if
         if (present(addmask)) then
-          call addmask%swap(tin, i1+k, cr+k)
+          call addmask%swap(t, i1+k, cr+k)
         end if
         ls = LB%d(i1)
         CI = tovec(C%subarray(i1, k, i1, 1))
@@ -625,6 +633,90 @@ Module ModMtrx
         C%d(i1,:) = C%d(cr,:)
         LB%d(i1) = LB%d(cr)
         LB%d(cr) = 0
+      end do
+    end
+    
+    subroutine mtrx_umaxvol2(this, tin, k, l, per, cin, addmask)
+      Class(Mtrx) :: this
+      Type(Mtrx) :: C, Ahat, Q, R, Y
+      Type(IntVec), optional :: per
+      Logical, optional :: cin
+      Type(Mtrx), intent(in), optional :: addmask
+      Type(Vector) :: LB, CI, CJ, tau
+      Integer(4), intent(in) :: k, l
+      Integer(4), intent(in) :: tin
+      Integer(4) t
+      Logical cin_
+      Integer(4) n, i1, cr
+      Integer(4) ij(1)
+      DOUBLE PRECISION ls
+      if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
+        if (.not. present(CIN)) then
+          print *, "error in umaxvol2"
+        end if
+      end if
+      if (l < k) then
+        print *, "error in umaxvol2"
+      end if
+      if (present(cin)) then
+        cin_ = cin
+      else
+        cin_ = .false.
+      end if
+      if (tin == 1) then
+        t = 1
+        n = this%n
+        if (cin_) then
+          C = this%subarray(n, k, k+1, 1)
+        else
+          Ahat = this%subarray(k,k)
+          call Ahat%halfqr(Q, tau, R)
+          C = this%subarray(n, k, k+1, 1)
+          call dtrsm('R', 'U', 'N', 'N', C%n, C%m, 1.0d0, R%d, R%n, C%d, C%n)
+        end if
+      else
+        t = 2
+        n = this%m
+        if (cin_) then
+          C = .T.this%subarray(k, n, 1, k+1)
+        else
+          Ahat = this%subarray(k, k)
+          call Ahat%halflq(R, tau, Q)
+          C = .T.(R%ltsolve(this%subarray(k, n, 1, k+1)))
+        end if
+      end if
+      if (n > 2*k) then
+        LB%n = n
+        LB%d = sum(C%d**2, dim = 2)
+      else
+        LB = (C .dot. C)*evec(k) !Faster if LB has size n < 2*k AND evec is on the right
+      end if
+      Y = eye(k)
+      call CI%init(k)
+      do cr = 1, l-k
+        ij = maxloc(LB%d(cr:))
+        i1 = ij(1) + cr - 1
+        call this%swap(t, i1+k, cr+k)
+        if (present(per)) then
+          call per%swap(i1+k, cr+k)
+        end if
+        if (present(addmask)) then
+          call addmask%swap(t, i1+k, cr+k)
+        end if
+        ls = -1.0d0/(1.0d0+LB%d(i1))
+
+        tau = tovec(C%subarray(i1, k, i1, 1))
+        call dsymv('U',k,1.0d0,Y%d,k,tau%d,1,0.0d0,CI%d,1)
+        !CI = Y*tovec(C%subarray(i1, k, i1, 1))
+        
+        call dsyr('U',k,ls,CI%d,1,Y%d,k)
+        !call Y%update1v(ls,CI,CI)
+        
+        CJ = C*CI
+        CJ%d(:) = CJ%d(:)**2
+        call LB%update1(ls,CJ)
+        C%d(i1,:) = C%d(cr,:)
+        LB%d(i1) = LB%d(cr)
       end do
     end
     

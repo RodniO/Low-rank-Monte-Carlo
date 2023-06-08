@@ -7,7 +7,8 @@ all:	intel
 run:	intel_run
 
 compiler_intel = ifort
-opt_intel = -module ./obj_intel -O3 -xHost -no-wrap-margin
+opt_intel = -module ./obj_intel -O3 -xHost -no-wrap-margin -parallel
+#-static
 obj_intel = $(addprefix obj_intel/, $(obj))
 exe_intel = Main.exe
 
@@ -17,7 +18,8 @@ intel_run:	intel
 intel:	$(exe_intel)
 
 $(exe_intel):	$(obj_intel)
-	$(compiler_intel) $(opt_intel) -o $(exe_intel) $(obj_intel) -mkl
+	$(compiler_intel) $(opt_intel) -o $(exe_intel) $(obj_intel) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -lm -ldl
+#-Wl,--start-group ${MKLROOT}/lib/intel64/libmkl_intel_lp64.a ${MKLROOT}/lib/intel64/libmkl_sequential.a ${MKLROOT}/lib/intel64/libmkl_core.a -Wl,--end-group -lpthread -lm -ldl
 	
 obj_intel/%.o:	$(source)/%.f90
 	$(compiler_intel) $(opt_intel) -c $< -o $@
@@ -32,6 +34,7 @@ obj_intel/Main.o:	$(source)/Main.f90	$(incfiles)
 	
 compiler_gnu = gfortran
 opt_gnu = -J./obj_gnu -I./obj_gnu -O3 -Wall -Wno-uninitialized -Wno-unused-function -Wno-unused-dummy-argument -fimplicit-none
+#-Ofast -ftree-vectorize
 obj_gnu = $(addprefix obj_gnu/, $(obj))
 exe_gnu = Main_gnu.exe
 

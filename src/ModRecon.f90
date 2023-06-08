@@ -1,7 +1,11 @@
 Module ModRecon
   USE ModSparse
   
-  !Module for matrix reconstruction
+  !Module for matrix reconstruction  
+  
+  public :: reconstruct
+  
+  private :: replace, ApproxSparse
   
   Contains
 
@@ -426,18 +430,18 @@ Module ModRecon
     Type(Mtrx) :: lcurmat, rcurmat
     Type(SparseRow), intent(in) :: KnownSparse
     Type(SparseCol), intent(in) :: KnownSparsec
-    Type(Mtrx) u, s, v, cs, us, rs, cs1, rs1, curc
+    Type(Mtrx) u, v, cs, us, rs, cs1, rs1, curc
+    Type(Vector) s
     Type(Mtrx) curc2, curr2
     Type(IntVec) :: perm1, perm2
     Type(Vector) tau1, tau2
-    Type(Vector) work
     Integer(4), intent(in) :: r, r1, r2
     Integer(4) :: steps, swaps, maxsteps
     Integer(4) :: maxswaps
     Double precision, intent(in) :: sq
     Double precision, intent(out) :: error
     Integer(4) st, tst, n, prevst, prevtst
-    Integer(4) i, j, j1
+    Integer(4) i
     
     n = lcurmat%n
     call lcurmat%permrows(perm1, 1)
@@ -469,14 +473,15 @@ Module ModRecon
       if (tst > 0) then
         curc = lcurmat * rcurmat%subarray(r,r1)
         call replace(curc,KnownSparse,KnownSparsec,sq,2,r1,perm2,perm1)
-        curc2 = curc .dI. curc%subarray(r1, r1)
+        call curc%umaxvol2(1, r1, r2, perm1, .false., lcurmat)
+      else
+        call curc2%umaxvol2(1, r1, r2, perm1, .true., lcurmat)
       end if
-      call curc2%hmaxvol2(1, r1, r2, perm1, .true., lcurmat)
     end if
 
     if (maxswaps > 0) then
       curr2 = .T.curr2
-      call curr2%hmaxvol2(2, r1, r2, perm2, .true., rcurmat)
+      call curr2%umaxvol2(2, r1, r2, perm2, .true., rcurmat)
     end if
     
     if (swaps - prevtst >= r) then
@@ -489,17 +494,10 @@ Module ModRecon
     call replace(cs, KnownSparse,KnownSparsec,sq,2,r2,perm2,perm1)
     us = cs%subarray(r2, r2)
     call us%svd(u, s, v)
-    u = u%subarray(r2, r1)
-    s = s%subarray(r1, r1)
-    v = v%subarray(r1, r2)
-    do j = 1, r1
-      s%d(j,j) = 1.0d0/s%d(j,j)
-    end do
-    cs = cs * (.T.v)
-    us = s*(.T.u)
+    cs = cs * (.T.v%subarray(r1, r2))
     rs = lcurmat%subarray(r2,r) * rcurmat
     call replace(rs, KnownSparse,KnownSparsec,sq,1,r2,perm1,perm2)
-    rs = us*rs
+    rs = (s%subarray(r1) .dd. (.T.u%subarray(r2, r1)))*rs
     
     call cs%halfqr(u, tau1, cs1)
     call rs%halflq(rs1, tau2, v)
@@ -507,48 +505,14 @@ Module ModRecon
     us = cs1 * rs1
     call us%svd(cs, s, rs)
     cs = cs%subarray(r1, r)
-    error = 0.0d0
-    do i = r+1, r1
-      error = error + s%d(i,i)**2
-    end do
-    s = s%subarray(r, r)
-    rs = rs%subarray(r, r1)
-
-    rs = s*rs
+    error = sum(s%d(r+1:r1)**2)
+    rs = s%subarray(r) .dot. rs%subarray(r, r1)
     
-    cs = cs%multq(u, tau1, 'L', 'D')
-    rs = rs%multq(v, tau2, 'R', 'U')
+    lcurmat = cs%multq(u, tau1, 'L', 'D')
+    rcurmat = rs%multq(v, tau2, 'R', 'U')
     
-    call cs%permrows(perm1, 2)
-    call rs%permcols(perm2, 2)
-
-    if (maxsteps < 0) then
-      call u%deinit()
-      call us%deinit()
-      call v%deinit()
-      call u%init(KnownSparse%nz, r)
-      do i = 1, r
-        j1 = 0
-        do j = 1, u%n
-          do while (KnownSparse%i(j1+1) <= j)
-            j1 = j1 + 1
-          end do
-          u%d(j,i) = cs%d(j1,i) * rs%d(i,KnownSparse%j(j))
-        end do
-      end do
-      call v%init(u%n, 1)
-      do i = 1, u%n
-        v%d(i,1) = KnownSparse%d(i)
-      end do
-      call work%init(2*u%n*u%m**2)
-      call dgels('N', u%n, u%m, 1, u%d, u%n, v%d, u%n, work%d, 2*u%n*u%m**2, j1)
-      do i = 1, r
-        s%d(i,i) = v%d(i,1)
-      end do   
-    end if 
-    
-    lcurmat = cs
-    rcurmat = rs
+    call lcurmat%permrows(perm1, 2)
+    call rcurmat%permcols(perm2, 2)
   end
 
 end module

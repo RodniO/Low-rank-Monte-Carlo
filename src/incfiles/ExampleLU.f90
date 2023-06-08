@@ -87,8 +87,6 @@ subroutine ExampleLU()
   maxc(1) = max(maxc(1), A1%cnorm())
   
   !2) ADAPTIVE CROSS
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   
@@ -118,8 +116,6 @@ subroutine ExampleLU()
   maxt(2) = max(maxt(2), time)
   
   !3) FULL GAUSS
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   
@@ -150,8 +146,6 @@ subroutine ExampleLU()
   
   !4) MAXVOL, 2 steps, r swaps
   maxsteps = 1
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   
@@ -183,12 +177,9 @@ subroutine ExampleLU()
   !5) RRLU by Pan
   !Pan, C.-T.: On the existence and computation of rank revealing LU factorizations. Linear Algebra Appl. 316, 199{222 (2000).
   !https://doi.org/10.1016/S0024-3795(00)00120-8
-  call per1%deinit()
   call per1%perm(n)
-  call per2%deinit()
   call per2%perm(n)
 
-  call AR%deinit()
   call AR%init(k, n)
   
   time = dsecnd()
@@ -233,8 +224,6 @@ subroutine ExampleLU()
   
   !6) MAXVOL, unlimited steps
   maxsteps = 100
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   
@@ -265,8 +254,6 @@ subroutine ExampleLU()
   
   !9) OURS (3rho-locally maximum volume search), unlimited steps
   maxsteps = 100
-  call per1%deinit()
-  call per2%deinit()
   call per1%perm(n)
   call per2%perm(n)
   

@@ -187,11 +187,13 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
   Type(Mtrx), intent(out) :: C !Columns for CUR approximation
   Type(Mtrx), intent(out) :: UR !UR of CUR approximation
   Integer(4), intent(in) :: maxsteps, maxswaps !Maximum number of steps and swaps
-  Type(Mtrx), intent(out), optional :: CA !C*Ahat^{-1}
+  Type(Mtrx), intent(out), optional :: CA !C*Ahat^{-1} or C*Rhat^{-1} from Ahat=Qhat*Rhat, whichever is faster
   Logical, intent(in), optional :: pre !Run premaxvol? [FALSE]
   Logical :: pre_
 
   Type(Mtrx) ABout
+  Type(Mtrx) Ahat, Q, R
+  Type(Vector) tau
   Type(IntVec) peri !Identity permutation
   Type(Mtrx) RT !Transposed rows
   Type(Mtrx) URT !Transposed UR
@@ -225,6 +227,7 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
       else
         call C%cmaxvol(per1, swapsmade1, maxswaps, ABin = ABout)
       end if
+      swapsmade1 = swapsmade1 + rank
     else
       C = Acols(Afun, M, rank, per1, per2, param)
       !We use column version of maxvol.
@@ -244,6 +247,7 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
 !       call RT%premaxvol(rank, per2, ABout)
 !       RT = .T.RT
 !       call RT%cmaxvol(per2, swapsmade2, maxswaps, URT, ABin = .T.ABout)
+!       swapsmade1 = swapsmade1 + rank
 !     else
       !Select first r rows (transposed)
       RT = Arowst(Afun, rank, N, per1, per2, param)
@@ -258,6 +262,12 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
   end do
   !Rows should coincide with the rows of A, so we use peri
   C = Acols(Afun, M, rank, peri, per2, param)
+  if (present(CA) .and. (swapsmade2 > 0)) then
+    CA = Acols(Afun, M, rank, per1, per2, param)
+    Ahat = CA%subarray(rank, rank)
+    call Ahat%halfqr(Q, tau, R)
+    call dtrsm('R', 'U', 'N', 'N', CA%n, CA%m, 1.0d0, R%d, R%n, CA%d, CA%n)
+  end if
   UR = .T.URT
   !We swap the columns back to make them coincide with the columns of A
   call UR%permcols(per2, 2)
@@ -271,8 +281,8 @@ subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR, ca)
   Type(IntVec) :: per1, per2 !Permutations of rows and columns
   Type(Mtrx), intent(in) :: param !Parameters for Afun
   Type(Mtrx) :: C !Columns for CUR approximation
-  Type(Mtrx) :: UR !UR of CUR approximation
-  Logical, intent(in), optional :: ca !C is actually CA?
+  Type(Mtrx) :: UR !UR of CUR approximation. Not permuted!
+  Logical, intent(in), optional :: ca !C is actually C Ahat^-1 (or, at least, C Rhat^-1, Ahat = Qhat Rhat)? Permuted!
 
   Logical :: ca_
   Type(IntVec) peri !Identity permutation
@@ -306,11 +316,11 @@ subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR, ca)
   end if
   
   call UR%permcols(per2, 1)
-  !Can be applied to the entire matrix like A%hmaxvol2 too, if necessary.
-  call C%hmaxvol2(1, rank, k, per1, ca_)
+  !Can be applied to the entire matrix like A%umaxvol2 too, if necessary.
+  call C%umaxvol2(1, rank, k, per1, ca_)
   !2 indicates that we swap columns (1 if rows)
   !1 indicates that our rows are already multiplied be A^-1 (0 if not)
-  call UR%hmaxvol2(2, rank, l, per2, .true.)
+  call UR%umaxvol2(2, rank, l, per2, .true.)
   !We now need to use more rows and columns
   C = Acols(Afun, M, l, peri, per2, param)
   R = Arows(Afun, k, N, per1, per2, param)
@@ -365,6 +375,7 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
     if (i == 1) then
       call R%premaxvol(rank, per2, ABout, cout)
       call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+      swapsmade1 = swapsmade1 + rank
     else
       call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
     end if
@@ -375,8 +386,9 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
 !       C = Acolst(Afun, M, rank, per1, per2, param)
 !       call C%premaxvol(rank, per1)
 !       C = .T.C
-!       !Apply hmaxvol2, use Q as output
+!       !Apply umaxvol2, use Q as output
 !       call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
+!       swapsmade2 = swapsmade2 + rank
 !     else
       C = Acols(Afun, M, rank, per1, per2, param)
       !1 for swaps of rows; 0 for no rows explicitly kept unswapped
@@ -396,6 +408,7 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
       C = Acolst(Afun, M, l, peri, per2, param)
       call C%premaxvol(rank, peri, ABout, cout)
       call C%dominantr(2, rank, l, peri, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+      swapsmade1 = swapsmade1 + rank
     else
       C = Acols(Afun, M, l, peri, per2, param)
       call C%dominantr(1, rank, l, peri, swapsmade1, maxswaps)
@@ -406,8 +419,9 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
     R = Arows(Afun, rank, N, peri, per2, param)
 !     if (i == 1) then
 !       call R%premaxvol(rank, per2)
-!       !Apply hmaxvol2, use Q as output
+!       !Apply umaxvol2, use Q as output
 !       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
+!       swapsmade2 = swapsmade2 + rank
 !     else
       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
 !     end if

@@ -25,42 +25,36 @@ subroutine ExampleM()
   print *, ''
   print *, 'Wagner (majorant) method:'
   call MonteWagnerSimple(n0, nv, 3.0d0, 1)
-  call nv%deinit()
   call nv%init(n)
   nv%d(1) = 100000
   n0 = 1.0d0
   print *, ''
   print *, 'Walker-Sabelfeld (stratified) method:'
   call MonteWalker(n0, nv, 3.0d0, 1)
-  call nv%deinit()
   call nv%init(n)
   nv%d(1) = 100000
   n0 = 1.0d0
   print *, ''
   print *, 'Low-rank method:'
   call MonteSimple(n0, nv, 3.0d0, 1)
-  call nv%deinit()
   call nv%init(n)
   nv%d(1) = 100000
   n0 = 1.0d0
   print *, ''
   print *, 'Low-rank method with array of particles:'
   call MonteSimplePart(n0, nv, 3.0d0, 1) !Use when N_p (number of particles) << M (maximum particle mass)
-  call nv%deinit()
   call nv%init(n)
   nv%d(1) = 100000
   n0 = 1.0d0
   print *, ''
   print *, 'Acceptance-rejection method:'
   call MonteUpB(n0, nv%d(1)/10, 3.0d0, 1)
-  call nv%deinit()
   call nv%init(n)
   nv%d(1) = 100000
   n0 = 1.0d0
   print *, ''
   print *, 'Inverse method:'
   call MonteInverse(n0, nv%d(1)/10, 3.0d0, 1)
-  call nv%deinit()
   
   print *, ''
   print *, 'TEMPERATURE-DEPENDENT EQUATIONS'
@@ -73,8 +67,6 @@ subroutine ExampleM()
   print *, ''
   print *, 'Low-rank method:'
   call MonteTemp(n0, nv, temps, 1000.0d0, 0.4d0, 0.1d0, 1)
-!   call nv%deinit()
-!   call temps%deinit()
 !   call nv%init(n)
 !   call temps%init(n)
 !   nv%d(1) = 10000
@@ -83,8 +75,6 @@ subroutine ExampleM()
 !   print *, ''
 !   print *, 'Wagner (majorant) method:'
 !   call MonteWagnerRanked(3, n0, nv, temps, 1000.0d0, 0.4d0, 0.1d0, 1) !INCORRECT
-  call nv%deinit()
-  call temps%deinit()
   call nv%init(n)
   call temps%init(n)
   nv%d(1) = 10000
@@ -93,8 +83,6 @@ subroutine ExampleM()
   print *, ''
   print *, 'Acceptance-rejection method:'
   call MonteUpBtemp(n0, nv%d(1), temps%d(1), 1000.0d0, 1)
-  call nv%deinit()
-  call temps%deinit()
   
   print *, ''
   print *, 'BOLTZMANN EQUATIONS'
@@ -116,8 +104,6 @@ subroutine ExampleM()
   print *, ''
   print *, 'Low-rank method:'
   call MonteDSMC(n0, nv, temps, 1.0d0, 0.0d0, 0.0d0, 0.0d0, 1)
-  call nv%deinit()
-  call temps%deinit()
   call nv%init(2**10)
   call temps%init(2**10)
   nv%d(1) = 999
@@ -135,8 +121,6 @@ subroutine ExampleM()
   print *, ''
   print *, 'Low-rank method (spherically symmetric speeds):'
   call MonteDSMCSphere(n0, nv, temps, 1.0d0, 0.0d0, 0.0d0, 0.0d0, 1)
-!   call nv%deinit()
-!   call temps%deinit()
 !   call nv%init(2**10)
 !   call temps%init(2**10)
 !   nv%d(1) = 999
