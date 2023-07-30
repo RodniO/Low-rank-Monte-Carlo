@@ -209,7 +209,6 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
   !Initialize identity permutation
   call peri%perm(M)
   
-  swapsmade2 = 1
   !Here we use 'cmaxvol', which is maxvol in columns
   do i = 1, maxsteps
     !Select first r columns
@@ -220,14 +219,14 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
     !Same goes if one wants to modify Arows or Acols.
     if ((i == 1) .and. (pre_)) then
       C = Acolst(Afun, M, rank, per1, per2, param)
-      call C%premaxvol(rank, per1, ABout)
-      C = .T.C
-      if (present(CA)) then
-        call C%cmaxvol(per1, swapsmade1, maxswaps, CA, ABin = ABout)
-      else
-        call C%cmaxvol(per1, swapsmade1, maxswaps, ABin = ABout)
-      end if
-      swapsmade1 = swapsmade1 + rank
+      call C%premaxvol(rank, per1)
+      !C = .T.C
+      !if (present(CA)) then
+      !  call C%cmaxvol(per1, swapsmade1, maxswaps, CA, ABin = ABout)
+      !else
+      !  call C%cmaxvol(per1, swapsmade1, maxswaps, ABin = ABout)
+      !end if
+      swapsmade1 = rank
     else
       C = Acols(Afun, M, rank, per1, per2, param)
       !We use column version of maxvol.
@@ -238,31 +237,31 @@ subroutine maxvol(Afun, M, N, rank, per1, per2, param, C, UR, maxsteps, maxswaps
       end if
     end if
     !Exit if no swaps were made
-    if (swapsmade1 + swapsmade2 == 0) then
+    if ((swapsmade1 == 0) .and. (i > 1)) then
       exit
     end if
     
-!     if ((i == 1) .and. (pre_)) then
-!       RT = Arows(Afun, rank, N, per1, per2, param)
-!       call RT%premaxvol(rank, per2, ABout)
-!       RT = .T.RT
-!       call RT%cmaxvol(per2, swapsmade2, maxswaps, URT, ABin = .T.ABout)
-!       swapsmade1 = swapsmade1 + rank
-!     else
+     if ((i == 1) .and. (pre_)) then
+       RT = Arows(Afun, rank, N, per1, per2, param)
+       call RT%premaxvol(rank, per2, ABout)
+       RT = .T.RT
+       call RT%cmaxvol(per2, swapsmade2, maxswaps, URT, ABin = .T.ABout)
+       swapsmade2 = swapsmade2 + rank
+     else
       !Select first r rows (transposed)
       RT = Arowst(Afun, rank, N, per1, per2, param)
       !We again use column version and swap columns
       !That's why we have 2 instead of 1
       call RT%cmaxvol(per2, swapsmade2, maxswaps, URT)
-!     end if
+     end if
     !Exit if no swaps were made
-    if (swapsmade1 + swapsmade2 == 0) then
+    if ((swapsmade2 == 0) .and. ((i > 1) .or. (.not.(pre_)))) then
       exit
     end if
   end do
   !Rows should coincide with the rows of A, so we use peri
   C = Acols(Afun, M, rank, peri, per2, param)
-  if (present(CA) .and. (swapsmade2 > 0)) then
+  if (present(CA) .and. ((swapsmade2 > 0) .or. ((i == 1) .and. (pre_)))) then
     CA = Acols(Afun, M, rank, per1, per2, param)
     Ahat = CA%subarray(rank, rank)
     call Ahat%halfqr(Q, tau, R)
@@ -357,10 +356,10 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   Type(Mtrx) U, V !SVD of the submatrix
   Type(Vector) s !Singular values
   Integer(4) swapsmade1, swapsmade2 !Number of swaps in rows and columns
-  Integer(4) i
+  Integer(4) i, j
   
-  Type(Mtrx) ABout
-  Type(Vector) cout
+  Type(Mtrx) ABout, CMout, Zout
+  Type(Vector) cout, Lout
   
   !Type(Mtrx) Q1
   !Type(Vector) tau1
@@ -368,69 +367,80 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   !We do essentially the same we have been doing with 'cmaxvol',
   !but now we use 'dominantc' and 'dominantr'
 
-  swapsmade2 = 1
   !maxvol-rect of size k x r: find k good rows
   do i = 1, maxsteps
-    R = Arows(Afun, k, N, per1, per2, param)
-    if (i == 1) then
-      call R%premaxvol(rank, per2, ABout, cout)
-      call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin = ABout, cin = cout)
-      swapsmade1 = swapsmade1 + rank
+    if (k >= l) then
+      R = Arows(Afun, k, N, per1, per2, param)
+      if (i == 1) then
+        call R%premaxvol(rank, per2, ABout, cout)
+        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+        swapsmade1 = swapsmade1 + rank
+      else
+        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
+      end if
     else
-      call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
+      C = Acolst(Afun, M, l, per1, per2, param)
+      if (i == 1) then
+        call C%premaxvol(rank, per1, ABout, cout)
+        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+        swapsmade1 = swapsmade1 + rank
+      else
+        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps)
+      end if
     end if
-    if (swapsmade1 + swapsmade2 == 0) then
+    if ((swapsmade1 == 0) .and. (i > 1)) then
       exit
     end if
-!     if (i == 1) then
-!       C = Acolst(Afun, M, rank, per1, per2, param)
-!       call C%premaxvol(rank, per1)
-!       C = .T.C
-!       !Apply umaxvol2, use Q as output
-!       call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
-!       swapsmade2 = swapsmade2 + rank
-!     else
+    if (k >= l) then
+     if (i == 1) then
+       C = Acolst(Afun, M, rank, per1, per2, param)
+       call C%premaxvol(rank, per1, ABout)
+       ABout%d(1:rank,1:rank) = 0
+       do j = 1, rank
+         About%d(j,j) = 1.0d0
+       end do
+       call ABout%umaxvol2(2, rank, k, per1, .true., C, CMout, Zout, Lout)
+       call C%dominantc(2, rank, k, per1, swapsmade2, maxswaps, CMout, Zout, Lout)
+       swapsmade2 = swapsmade2 + k
+     else
       C = Acols(Afun, M, rank, per1, per2, param)
       !1 for swaps of rows; 0 for no rows explicitly kept unswapped
       !(first rows can be saved to preserve the r x r dominant submatrix)
       call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
-!     end if
-    if (swapsmade1 + swapsmade2 == 0) then
-      exit
-    end if
-  end do
-  !We save per1 and work in the copy
-  call peri%copy(per1)
-  swapsmade2 = 1
-  !maxvol-rect of size r x l: find l good columns
-  do i = 1, maxsteps
-    if (i == 1) then
-      C = Acolst(Afun, M, l, peri, per2, param)
-      call C%premaxvol(rank, peri, ABout, cout)
-      call C%dominantr(2, rank, l, peri, swapsmade1, maxswaps, ABin = ABout, cin = cout)
-      swapsmade1 = swapsmade1 + rank
+     end if
     else
-      C = Acols(Afun, M, l, peri, per2, param)
-      call C%dominantr(1, rank, l, peri, swapsmade1, maxswaps)
-    end if
-    if (swapsmade1 + swapsmade2 == 0) then
-      exit
-    end if
-    R = Arows(Afun, rank, N, peri, per2, param)
-!     if (i == 1) then
-!       call R%premaxvol(rank, per2)
-!       !Apply umaxvol2, use Q as output
-!       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
-!       swapsmade2 = swapsmade2 + rank
-!     else
+      if (i == 1) then
+       R = Arows(Afun, rank, N, per1, per2, param)
+       call R%premaxvol(rank, per2, ABout)
+       ABout%d(1:100,1:100) = 0
+       do j = 1, 100
+         About%d(j,j) = 1.0d0
+       end do
+       call ABout%umaxvol2(2, rank, l, per2, .true., R, CMout, Zout, Lout)
+       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps, CMout, Zout, Lout)
+       swapsmade2 = swapsmade2 + l
+     else
+      R = Arows(Afun, rank, N, per1, per2, param)
       call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
-!     end if
-    if (swapsmade1 + swapsmade2 == 0) then
+     end if
+    end if
+    if (swapsmade2 == 0) then
       exit
     end if
   end do
-  !Return peri to identity permutation
-  call peri%deinit()
+  
+  !Instead of the second cycle, just work in Ahat^+ R: it is faster and gives better accuracy
+  if (k >= l) then
+    R = Arows(Afun, k, N, per1, per2, param)
+    Ahat = R%subarray(k,rank)
+    R = Ahat .Id. R
+    call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
+  else
+    C = Acols(Afun, M, l, per1, per2, param)
+    Ahat = C%subarray(rank,l)
+    C = C .dI. Ahat
+    call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
+  end if
   
 !Inverse through SVD of columns C: improve is not observable (need column diagram to see the difference)
 !   call peri%perm(N)

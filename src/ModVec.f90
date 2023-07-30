@@ -82,17 +82,16 @@ Module ModVec
       Integer(4), intent(in) :: c
       Type(Vector) :: res
       Integer(4) i
-      call res%init(this%n)
+      call res%copy(this)
       if (c == 1) then
-        do i = 1, this%n
-          res%d(i) = this%d(per%d(i))
+        do i = 1, per%n
+          this%d(i) = res%d(per%d(i))
         end do
       else
-        do i = 1, this%n
-          res%d(per%d(i)) = this%d(i)
+        do i = 1, per%n
+          this%d(per%d(i)) = res%d(i)
         end do
       end if
-      call this%copy(res)
     end
     
     subroutine vec_swap(this, a, b)
@@ -168,8 +167,9 @@ Module ModVec
     subroutine vec_copy(this, v)
       Class(Vector) :: this
       Type(Vector), intent(in) :: v
-      if (.not. allocated(this%d)) allocate(this%d(v%n))
-      if (this%n < v%n) then
+      if (.not. allocated(this%d)) then
+        Allocate(this%d(v%n))
+      else if (this%n < v%n) then
         Deallocate(this%d)
         Allocate(this%d(v%n))
       end if
@@ -427,6 +427,34 @@ Module ModVec
         end if
       end function
     end subroutine
+    
+    function myidamax(n, A) Result(res)
+      Integer(4) n
+      Double precision, intent(in) :: A(n)
+      Integer(4) res
+  
+      Double precision M, x, ab(16)
+      Integer(4) k, kf, ij(1)
+  
+      n = size(A)
+      M = 0
+      do k = 1, n-16, 16
+        ab(:) = abs(A(k:k+15))
+        x = maxval(ab)
+        if (x > M) then
+          ij = maxloc(ab)+k-1
+          M = x
+        end if
+      end do
+      kf = n - k + 1
+      ab(1:kf) = abs(A(k:n))
+      x = maxval(ab(1:kf))
+      if (x > M) then
+        ij = maxloc(ab(1:kf))+k-1
+        M = x
+      end if
+      res = ij(1)
+    end function
     
     !Create vector of ones or k-th vector of standard basis
     elemental function evec(n, k) Result(res)

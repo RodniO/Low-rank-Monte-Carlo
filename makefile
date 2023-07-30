@@ -33,7 +33,7 @@ obj_intel/Main.o:	$(source)/Main.f90	$(incfiles)
 	$(compiler_intel) $(opt_intel) -c $< -o $@
 	
 compiler_gnu = gfortran
-opt_gnu = -J./obj_gnu -I./obj_gnu -O3 -Wall -Wno-uninitialized -Wno-unused-function -Wno-unused-dummy-argument -fimplicit-none
+opt_gnu = -J./obj_gnu -I./obj_gnu -O3 -march=native -Wall -Wno-uninitialized -Wno-unused-function -Wno-unused-dummy-argument -fimplicit-none
 #-Ofast -ftree-vectorize
 obj_gnu = $(addprefix obj_gnu/, $(obj))
 exe_gnu = Main_gnu.exe
@@ -53,7 +53,7 @@ $(obj_gnu): | obj_gnu
 
 obj_gnu:
 	mkdir obj_gnu
-	
+		
 obj_gnu/Main.o:	$(source)/Main.f90	$(incfiles)
 	$(compiler_gnu) $(opt_gnu) -c $< -o $@
 	

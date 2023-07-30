@@ -32,17 +32,16 @@ Module ModIntVec
       Integer(4), intent(in) :: c
       Type(IntVec) :: res
       Integer(4) i
-      call res%init(this%n)
+      call res%copy(this)
       if (c == 1) then
-        do i = 1, this%n
-          res%d(i) = this%d(per%d(i))
+        do i = 1, per%n
+          this%d(i) = res%d(per%d(i))
         end do
       else
-        do i = 1, this%n
-          res%d(per%d(i)) = this%d(i)
+        do i = 1, per%n
+          this%d(per%d(i)) = res%d(i)
         end do
       end if
-      call this%copy(res)
     end
     
     subroutine intvec_swap(this, a, b)
@@ -50,7 +49,7 @@ Module ModIntVec
       Integer(4), intent(in) :: a, b
       Integer(4) tmp
       if ((a > this%n) .or. (b > this%n)) then
-        print *, "error in swap_vec"
+        print *, "error in swap_vec", a, b, this%n
         !call backtrace()
         return
       end if
@@ -81,8 +80,9 @@ Module ModIntVec
     subroutine intvec_copy(this, v)
       Class(IntVec) :: this
       Type(IntVec), intent(in) :: v
-      if (.not. allocated(this%d)) allocate(this%d(v%n))
-      if (this%n < v%n) then
+      if (.not. allocated(this%d)) then
+        Allocate(this%d(v%n))
+      else if (this%n < v%n) then
         Deallocate(this%d)
         Allocate(this%d(v%n))
       end if
