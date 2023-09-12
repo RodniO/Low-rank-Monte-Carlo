@@ -12,6 +12,8 @@ Module ModIntVec
       Procedure :: set => intvec_set !Sets d to desired array
       Procedure :: permapp => intvec_permapp !Apply permutation
       Procedure :: perm => intvec_perm !Initialize identity permutation
+      Generic :: permrand => intvec_permrand, intvec_permrandk !Random permutation
+      Procedure, private :: intvec_permrand, intvec_permrandk
       Procedure :: swap => intvec_swap !Swap two vector elements
       Procedure :: reverse => intvec_reverse !Reverse order of elements
       Procedure :: copy => intvec_copy !Copy vector
@@ -56,6 +58,37 @@ Module ModIntVec
       tmp = this%d(a)
       this%d(a) = this%d(b)
       this%d(b) = tmp
+    end
+    
+    subroutine intvec_permrand(this, n)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n
+      
+      Double precision :: vec(n)
+      Integer(4) i, j
+      
+      call this%perm(n)
+      call random_number(vec)
+      do i = 1, n-1
+        j = i + floor((n-i+1)*vec(i))
+        call this%swap(i,j)
+      end do
+    end
+    
+    subroutine intvec_permrandk(this, n, k)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n
+      Integer(4), intent(in) :: k
+      
+      Double precision :: vec(k)
+      Integer(4) i, j
+      
+      call this%perm(n)
+      call random_number(vec)
+      do i = 1, k
+        j = i + floor((n-i+1)*vec(i))
+        call this%swap(i,j)
+      end do
     end
     
     function intvec_reverse(this) Result(res)

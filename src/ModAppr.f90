@@ -2,7 +2,7 @@ Module ModAppr
   USE ModSparse
   
   !Module for constructing fast approximations
-  !Contains maxvol, maxvol2, maxvolproj and TruncateCUR
+  !Contains adaptive cross (ACA), maxvol, maxvol2, maxvolproj and TruncateCUR
 
   abstract interface
     !Interface for function, returning matrix elements
@@ -176,6 +176,246 @@ function Arowst(Afun, r, N, per1, per2, param) Result(res)
     end do
     !$OMP END PARALLEL DO
   end do
+end
+
+!Adaptive Cross. Improved code of Stanislav Stavtsev. Unlike versions by Stavtsev, Savostianov and Bebendorf,
+!uses rook pivoting instead of column pivoting, extends it to more starting columns and adaptive starting columns
+!and allows rho-locally maximum search.
+subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, abs_err)
+  procedure(elem_fun) :: Afun !Function, returning elements of A
+  Type(Mtrx), intent(in) :: param !Matrix parameters
+  Integer(4), intent(in) :: Ni, Nj !Matrix sizes
+  Integer(4) :: MaxRank !Input: maximum rank; Output: final rank
+  Integer(4), intent(in) :: jpmax_ !Number of starting columns; 0 is adaptive
+  Type(Mtrx), intent(out) :: U, V !Output low-rank factors
+  Type(IntVec), intent(in) :: per !Permutation to select starting rows (should be random)
+  Double precision, intent(in), optional :: rho_ !rho-locally maximum
+  Double precision, intent(in), optional :: rel_err !Desired relative error
+  Double precision, intent(in), optional :: abs_err !Desired absolute error; Max(rel,abs) is chosen
+       
+  Type(Mtrx) Up !Starting columns
+  Integer(4) jpmax !jpmax used
+  Logical adaptive !Whether number of starting rows is increased each iteration
+       
+  Logical, allocatable :: KnC(:) !Used columns toggle
+  Integer(4), allocatable :: KpC(:) !Starting columns toggle with indices
+  Integer(4), allocatable :: jPs(:) !Starting columns indices
+  Integer(4), allocatable :: iNs(:), jNs(:) !Used rows and columns indices
+  Integer(4) jP !New starting column index
+  Integer(4) iN, jN !New row and column indices
+  Integer(4) NSkel !Current skeletion (submatrix) size
+  Double precision Elem, ElemS !Pivot element and its square root
+  Double precision MaxElC, MaxElR !Max element in column and row
+  Double precision rho !rho used
+  Double precision err_bound !Error bound
+       
+  Integer(4) i, j, s !Indices
+       
+  if ((Ni <= 0) .or. (Nj <= 0) .or. (maxrank <= 0) .or. (jpmax_ < 0)) then
+    print *, 'Input sizes to ACA should be positive!'
+    return
+  end if
+       
+  rho = 1000000000.0d0
+  if (present(rho_)) then
+    if (rho_ < 1) then
+      print *, 'Input rho in ACA should be at least 1!'
+      return
+    end if
+    rho = rho_
+  end if
+       
+  if (present(abs_err)) then
+    err_bound = abs_err
+  else
+    err_bound = 0
+  end if
+
+  jpmax = jpmax_
+  if (jpmax_ == 0) then
+    jpmax = 1
+    adaptive = .true.
+  else
+    adaptive = .false.
+  end if
+
+  call U%init(Ni,maxrank)
+  call V%init(Nj,maxrank)
+  if (adaptive) then
+    call Up%init(Ni,maxrank)
+    Up%m = 1
+    Allocate(jPs(maxrank))
+  else
+    Allocate(jPs(jpmax))
+    call Up%init(Ni,jpmax)
+  end if
+  Allocate(KnC(Nj))
+  Allocate(KpC(Nj))
+  Allocate(iNs(maxrank))
+  Allocate(jNs(maxrank))
+
+  KnC = .false.
+  KpC = 0
+  jPs = 0
+  iNs = 0
+  jNs = 0
+        
+  !Init column indices 
+  jN = 1
+        
+  !Init row index
+  iN = 1
+        
+  do j = 1, jpmax
+    KpC(per%d(j)) = j
+    jPs(j) = per%d(j)
+  end do
+  jP = jpmax+1
+        
+  NSkel = 0
+        
+  !Initialize starting columns
+  do j = 1, jpmax
+    do i = 1, Ni
+      Up%d(i,j) = Afun(i, per%d(j), param)
+    end do
+  end do
+
+  !Start approximation process
+  do while (NSkel < MaxRank)
+        
+    !Number of skeletons to aproximate matrix
+    NSkel = NSkel + 1    
+            
+    !Choose new starting column if it was used
+    if ((KpC(jN) > 0) .and. (Nskel > 1)) then
+      s = KpC(jN)
+      KpC(jN) = 0
+      do while (KnC(per%d(jP)))
+        jP = jP + 1
+      end do
+      KpC(per%d(jP)) = s
+      jPs(s) = per%d(jP)
+      do i = 1, Ni
+        Up%d(i,s) = Afun(i,per%d(jP),param)
+      end do
+      do j = 1, NSkel-2
+        Up%d(:,s) = Up%d(:,s) - U%d(:,j)*V%d(per%d(jP),j)
+      end do
+      Up%d(iNs(1:Nskel-2),s) = 0
+      jP = jP + 1
+    end if
+            
+    !Adaptive increase of the number of starting columns
+    if ((adaptive) .and. (Nskel > 1)) then
+      jpmax = jpmax + 1
+      s = jpmax
+      Up%m = jpmax
+      do while (KnC(per%d(jP)))
+        jP = jP + 1
+      end do
+      KpC(per%d(jP)) = s
+      jPs(s) = per%d(jP)
+      do i = 1, Ni
+        Up%d(i,s) = Afun(i,per%d(jP),param)
+      end do
+      do j = 1, NSkel-2
+        Up%d(:,s) = Up%d(:,s) - U%d(:,j)*V%d(per%d(jP),j)
+      end do
+      Up%d(iNs(1:Nskel-2),s) = 0
+      jP = jP + 1
+    end if
+                        
+    !Update elements in starting columns
+    if (NSkel > 1) then
+      do j = 1, jpmax
+        Up%d(:,j) = Up%d(:,j) - U%d(:,NSkel-1) * V%d(jPs(j),NSkel-1)
+        Up%d(iN,j) = 0
+      end do
+    end if
+
+    !Find the maximum element in starting columns
+    call Up%cnormloc(s,jN)
+            
+    !Loop until rho-maximum is reached
+    MaxElC = Up%d(s,jN)
+    MaxElR = 0
+    do while (abs(MaxElC) > rho*abs(MaxElR))
+            
+      iN = s
+            
+      !Calculate elements in new row
+      do j = 1, Nj
+        V%d(j,NSkel) = Afun(iN,j,param)
+      end do
+      do j = 1, NSkel-1
+        V%d(:,NSkel) = V%d(:,NSkel) - U%d(iN,j)*V%d(:,j)
+      end do
+      V%d(jNs(1:Nskel-1),NSkel) = 0
+
+      !Calculate the maximum in the new row
+      s = jN
+      jN = myidamax(Nj, V%d(:,Nskel))
+      MaxElR = V%d(jN,NSkel)
+            
+      !Do not calculate the column, if it's the same
+      if ((s .ne. jN) .or. (U%d(iN,NSkel) == 0)) then
+            
+        !Calculate elements in new column
+        if (KpC(jN) == 0) then
+          do i = 1, Ni
+            U%d(i,NSkel) = Afun(i,jN,param)
+          end do
+          do j = 1, NSkel-1
+            U%d(:,NSkel) = U%d(:,NSkel) - U%d(:,j)*V%d(jN,j)
+          end do
+          U%d(iNs(1:Nskel-1),NSkel) = 0
+        else
+          U%d(:,NSkel) = Up%d(:,KpC(jN))
+        end if
+            
+        !Calculate the maximum in the new column
+        s = myidamax(Ni, U%d(:,Nskel))
+        MaxElC = U%d(s,NSkel)
+      end if
+              
+    end do
+            
+    !Check error bound, exit if reached
+    if (present(rel_err)) then
+      err_bound = max(err_bound, rel_err*abs(MaxElC))
+    end if
+    if (NSkel > 1) then
+      if (abs(MaxElC) < err_bound) then
+        U%d(:,NSkel) = 0
+        V%d(:,NSkel) = 0
+        MaxRank = NSkel-1
+        exit
+      end if
+    end if
+            
+    !Form skeleton at cross iN, jN
+    ElemS = sqrt(abs(MaxElR))
+    Elem = Elems/MaxElR
+    ElemS = 1/ElemS
+    if (MaxElR .ne. 0) then
+      U%d(:,NSkel) = Elem*U%d(:,NSkel)
+      V%d(:,NSkel) = ElemS*V%d(:,NSkel)
+    else
+      print *, 'Zero Skeleton encountered!'
+      U%d(:,NSkel) = 0
+      V%d(:,NSkel) = 0
+      MaxRank = NSkel-1
+      exit
+    end if 
+
+    !Mark new row and column
+    KnC(jN) = .true.
+    iNs(NSkel) = iN
+    jNs(NSkel) = jN
+
+  end do
+  Deallocate(KnC,KpC,jPs,iNs,jNs)
 end
   
 !Simplest CUR approximation with U = \hat A^{-1}

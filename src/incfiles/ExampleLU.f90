@@ -93,7 +93,7 @@ subroutine ExampleLU()
   !Let's calculate the time
   time = dsecnd()
   
-  call ACA(n, n, k, A, C, AR)
+  call ACA(Aelem, A, n, n, k, 1, C, AR, per1)
   AR = .T.AR
   
   time = dsecnd() - time
@@ -654,7 +654,7 @@ subroutine lumaxvol(Afun, Ain, ro, per1, per2, k, full, Ein, totsteps, cout, aro
 !Aparinov, A.A., Setukha, A.V. & Stavtsev, S.L.
 !Parallel Implementation for Some Applications of Integral Equations Method. 
 !Lobachevskii J Math 39, 477–485 (2018). https://doi.org/10.1134/S1995080218040029
-subroutine ACA(Ni, Nj, MaxRank, param, U, V)
+subroutine ACAold(Ni, Nj, MaxRank, param, U, V)
      USE ModAppr
        Integer, intent(in) :: Ni, Nj, MaxRank !Matrix sizes, desired rank
        Type(Mtrx), intent(in) :: param !Matrix parameters
