@@ -494,10 +494,10 @@ Module ModRecon
     call replace(cs, KnownSparse,KnownSparsec,sq,2,r2,perm2,perm1)
     us = cs%subarray(r2, r2)
     call us%svd(u, s, v)
-    cs = cs * (.T.v%subarray(r1, r2))
+    cs = cs .dT. v%subarray(r1, r2)
     rs = lcurmat%subarray(r2,r) * rcurmat
     call replace(rs, KnownSparse,KnownSparsec,sq,1,r2,perm1,perm2)
-    rs = (s%subarray(r1) .dd. (.T.u%subarray(r2, r1)))*rs
+    rs = (u%subarray(r2, r1) .dd. s%subarray(r1)) .Td. rs
     
     call cs%halfqr(u, tau1, cs1)
     call rs%halflq(rs1, tau2, v)

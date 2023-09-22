@@ -7,8 +7,8 @@ all:	intel
 run:	intel_run
 
 compiler_intel = ifort
-opt_intel = -module ./obj_intel -O3 -xHost -no-wrap-margin -parallel
-#-static
+opt_intel = -module ./obj_intel -O3 -xHost -no-wrap-margin
+#-static -parallel
 obj_intel = $(addprefix obj_intel/, $(obj))
 exe_intel = Main.exe
 
@@ -34,7 +34,7 @@ obj_intel/Main.o:	$(source)/Main.f90	$(incfiles)
 	
 compiler_gnu = gfortran
 opt_gnu = -J./obj_gnu -I./obj_gnu -O3 -march=native -Wall -Wno-uninitialized -Wno-unused-function -Wno-unused-dummy-argument -fimplicit-none
-#-Ofast -ftree-vectorize
+#-Ofast -ftree-vectorize -flto=auto -fuse-linker-plugin -floop-parallelize-all
 obj_gnu = $(addprefix obj_gnu/, $(obj))
 exe_gnu = Main_gnu.exe
 

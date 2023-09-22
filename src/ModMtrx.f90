@@ -72,10 +72,10 @@ Module ModMtrx
       Procedure :: dominantr => mtrx_dominantr !Faster Dominant-R
       Procedure :: dominantrold => mtrx_dominantrold
       Procedure :: maxvol2r => mtrx_maxvol2r !Greedy column addition from [5]
-      Procedure :: maxelement => mtrx_maxelement !Returns position of maximum (in absolute value) element
       Procedure :: fnorm => mtrx_fnorm !Frobenius norm
       Procedure :: cnorm => mtrx_cnorm !Chebyshev norm
       Procedure :: cnormloc => mtrx_cnormloc !Chebyshev norm location
+      Procedure :: maxelement => mtrx_maxelement !Maximum location
       Procedure :: norm2 => mtrx_norm2 !Spectral norm
       Procedure :: trace => mtrx_trace !Trace
       Procedure :: vol => mtrx_vol !Matrix volume
@@ -124,6 +124,16 @@ Module ModMtrx
   !Matrix-matrix, matrix-vector and matrix-number multiplications
   interface operator(*)
     module procedure mtrx_mmtr, mtrx_tmvec, mtrx_mvect, mtrx_tmnum, mtrx_tmnumr, mtrx_mnumt, mtrx_mnumtr
+  end interface
+  
+  !Matrix-matrix multiplication, transpose first matrix
+  interface operator(.Td.)
+    module procedure mtrx_tmmtr
+  end interface
+  
+  !Matrix-matrix multiplication, transpose second matrix
+  interface operator(.dT.)
+    module procedure mtrx_mmtrt
   end interface
   
   !Matrix-number division
@@ -206,7 +216,9 @@ Module ModMtrx
     function mtrx_cnorm(this) Result(res)
       Class(Mtrx) :: this
       DOUBLE PRECISION res
-      res = maxval(abs(this%d))
+      Integer(4) i, j
+      call this%cnormloc(i, j)
+      res = abs(this%d(i, j))
     end
     
     subroutine mtrx_cnormloc(this, i, j)
@@ -232,6 +244,17 @@ Module ModMtrx
 !       end if
     end
     
+    subroutine mtrx_maxelement(this, i, j)
+      Class(Mtrx) :: this
+      Integer(4), intent(out) :: i, j
+      Integer(4) ij
+    
+      ij = myidmax(this%n*this%m, this%d)
+      j = (ij-1)/this%n
+      i = ij - j*this%n
+      j = j + 1
+    end
+    
     function mtrx_norm2(this) Result(res)
       Class(Mtrx) :: this
       Type(Mtrx) :: x, y, z
@@ -250,26 +273,6 @@ Module ModMtrx
       res = 0
       do i = 1, min(this%n, this%m)
         res = res + this%d(i,i)
-      end do
-    end
-    
-    subroutine mtrx_maxelement(this, k, l)
-      Class(Mtrx) :: this
-      Integer(4) k, l, n , m, i, j
-      DOUBLE PRECISION res
-      res = abs(this%d(1, 1))
-      k = 1
-      l = 1
-      n = this%n
-      m = this%m
-      do j = 1, m
-        do i = 1, n
-          if (abs(this%d(i, j)) > res) then
-            res = abs(this%d(i, j))
-            k = i
-            l = j
-          end if
-        end do
       end do
     end
     
@@ -485,7 +488,6 @@ Module ModMtrx
       Integer(4), intent(in) :: tin
       Integer(4) t, CIN2
       Integer(4) n, i1, cr
-      Integer(4) ij(1)
       DOUBLE PRECISION tau, ls, alpha
       if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
         if (.not. present(CIN)) then
@@ -519,8 +521,7 @@ Module ModMtrx
       end if
       LB = (C .dot. C)*evec(k)
       do cr = 1, l-k
-        ij = maxloc(LB%d)
-        i1 = ij(1)
+        i1 = LB%maxelement()
         call this%swap(t, i1+k, cr+k)
         if (present(per)) then
           call per%swap(i1+k, cr+k)
@@ -560,7 +561,6 @@ Module ModMtrx
       Integer(4) t
       Logical cin_
       Integer(4) n, i1, cr
-      Integer(4) ij(1)
       DOUBLE PRECISION ls
       if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
         if (.not. present(CIN)) then
@@ -606,8 +606,7 @@ Module ModMtrx
         LB = (C .dot. C)*evec(k) !Faster if LB has size n < 2*k AND evec is on the right
       end if
       do cr = 1, l-k
-        ij = maxloc(LB%d(cr:))
-        i1 = ij(1) + cr - 1
+        i1 = myidmax(n-cr+1,LB%d(cr:)) + cr - 1
         call this%swap(t, i1+k, cr+k)
         if (present(per)) then
           call per%swap(i1+k, cr+k)
@@ -630,20 +629,19 @@ Module ModMtrx
     
     subroutine mtrx_umaxvol2(this, tin, k, l, per, cin, addmask, Cout, Zout, Lout)
       Class(Mtrx) :: this
-      Type(Mtrx) :: C, Ahat, Q, R, Y
+      Integer(4), intent(in) :: tin
+      Integer(4), intent(in) :: k, l
       Type(IntVec), optional :: per
       Logical, optional :: cin
       Type(Mtrx), intent(in), optional :: addmask
       Type(Mtrx), intent(out), optional :: Cout, Zout
       Type(Vector), intent(out), optional :: Lout
       
+      Type(Mtrx) :: C, Ahat, Q, R, Y
       Type(Vector) :: LB, CI, CJ, tau
-      Integer(4), intent(in) :: k, l
-      Integer(4), intent(in) :: tin
       Integer(4) t
       Logical cin_
       Integer(4) n, i1, cr
-      Integer(4) ij(1)
       DOUBLE PRECISION ls
       if (((l > this%n) .and. (tin == 1)) .or. ((l > this%m) .and. (tin .ne. 1))) then
         if (.not. present(CIN)) then
@@ -664,9 +662,9 @@ Module ModMtrx
         if (cin_) then
           C = this%subarray(n, k)
         else
+          C = this%subarray(n, k)
           Ahat = this%subarray(k,k)
           call Ahat%halfqr(Q, tau, R)
-          C = this%subarray(n, k)
           call dtrsm('R', 'U', 'N', 'N', C%n, C%m, 1.0d0, R%d, R%n, C%d, C%n)
         end if
       else
@@ -690,8 +688,7 @@ Module ModMtrx
       call CI%init(k)
       call tau%init(k)
       do cr = k+1, l
-        ij = maxloc(LB%d(cr:))
-        i1 = ij(1) + cr - 1
+        i1 = myidmax(n-cr+1,LB%d(cr:)) + cr - 1
         call this%swap(t, i1, cr)
         if (present(per)) then
           call per%swap(i1, cr)
@@ -734,7 +731,6 @@ Module ModMtrx
       Integer(4), intent(in) :: k, l
       Integer(4), intent(in) :: t
       Integer(4) n, m, i, j, i1, j1, cr, tm
-      Integer(4) ij(1)
       DOUBLE PRECISION tmp, ls
       Integer(4) tmpi
       n = this%n
@@ -757,8 +753,7 @@ Module ModMtrx
         n = m
         tm = 2
         C = this%subarray(k, n)
-        C = A .Id. C
-        C = .T.C
+        C = .T.(A .Id. C)
       end if
       do i1 = k+1, n
         LB%d(i1) = 1.0d0
@@ -771,8 +766,7 @@ Module ModMtrx
       call CB%init(n, l)
       call dlacpy('A', n, k, C%d, n, CB%d, n)
       do cr = k+1, l
-        ij = maxloc(LB%d)
-        i = ij(1)
+        i = LB%maxelement()
         call this%swap(tm, i, cr)
         if (present(per)) then
           if (tm == 1) then
@@ -847,8 +841,7 @@ Module ModMtrx
 !         tm = 2
 !         A = this%subarray(k, l)
 !         C = this%subarray(k, n)
-!         C = A .Id. C
-!         C = .T.C
+!         C = .T.(A .Id. C)
 !       end if
 !       do i1 = l+1, n
 !         LB%d(i1) = 1.0d0
@@ -867,9 +860,9 @@ Module ModMtrx
 !         LC%d(i1) = 1.0d0 - CB%d(i1,i1)
 !       end do
 ! 
-!       call CB%maxelement(i,j)
-!       call LB%maxelement(i1)
-!       call LC%maxelement(j1)
+!       call CB%cnormloc(i,j)
+!       i1 = LB%maxelement()
+!       j1 = LC%maxelement()
 !       ro = CB%d(i,j)**2 + LB%d(i)*LC%d(j)
 !       if (i <= l) then
 !         ro = 0
@@ -909,7 +902,7 @@ Module ModMtrx
 !         CJ1 = CJ*k21
 !         CJ2 = CJ*k22
 !         CI = CB%subarray(i, l, i, 1)
-!         CBI = CB*(.T.CI)
+!         CBI = CB .dT. CI
 !         CI%d(1, j) = CI%d(1,j)-1.0d0
 !         CI1 = CI*k11
 !         CI2 = CI*k12
@@ -928,9 +921,9 @@ Module ModMtrx
 !         do i1 = 1, l
 !           LC%d(i1) = 1.0d0 - CB%d(i1,i1)
 !         end do
-!         call CB%maxelement(i,j)
-!         call LB%maxelement(i1)
-!         call LC%maxelement(j1)
+!         call CB%cnormloc(i,j)
+!         i1 = LB%maxelement()
+!         j1 = LC%maxelement()
 !         ro = CB%d(i,j)**2 + LB%d(i)*LC%d(j)
 !         if (i <= l) then
 !           ro = 0
@@ -1034,7 +1027,7 @@ Module ModMtrx
       LC%d(:l) = 2.0d0 - LB%d(:l)
       
       call dger(n, l, 1.0d0, LB%d, 1, LC%d, 1, B%d, n)
-      ij = maxloc(B%d(l+1:,:))
+      ij = maxloc(B%d(l+1:,:)) !Calculate with myidmax(N, B%d(l+1:,:))
       i = ij(1)+l
       j = ij(2)
       if (present(maxsteps)) then
@@ -1080,7 +1073,7 @@ Module ModMtrx
         
         B%d(l+1:,:) = CB%d(l+1:,:)**2
         call dger(n, l, 1.0d0, LB%d, 1, LC%d, 1, B%d, n)
-        ij = maxloc(B%d(l+1:,:))
+        ij = maxloc(B%d(l+1:,:)) !Calculate with myidmax(N, B%d(l+1:,:))
         i = ij(1)+l
         j = ij(2)
         cursteps = cursteps + 1
@@ -1131,8 +1124,7 @@ Module ModMtrx
     !    tm = 2
     !    A = this%subarray(k, l)
     !    CB = this%subarray(k, n)
-    !    CB = A .Id. CB
-    !    CB = .T.CB
+    !    CB = .T.(A .Id. CB)
     !  end if
     !  LB = (CB .dot. CB) * evec(l)
     !  do i1 = l+1, n
@@ -1216,7 +1208,6 @@ Module ModMtrx
       Type(Mtrx) AB, Ahat
       Integer(4) j, rank
       Integer(4) n, m
-      Integer(4) ij(1)
       Integer(4) info
       DOUBLE PRECISION aa, cmin
       Logical lqbased_
@@ -1247,8 +1238,7 @@ Module ModMtrx
         piv = per
       end if
       rank = 0
-      ij = maxloc(c%d)
-      j = ij(1)
+      j = c%maxelement()
       cmin = -c%d(j)
       where(c%d == 0) c%d = cmin
       
@@ -1293,8 +1283,7 @@ Module ModMtrx
         end if
         AB%d(rank,rank+1:m) = dapr2%d(rank+1:m)
 
-        ij = maxloc(c%d(rank+1:m))
-        j = ij(1)+rank
+        j = myidmax(m-rank,c%d(rank+1:m))+rank
       end do
       if (present(ABout)) then
         ABout = AB
@@ -1344,7 +1333,6 @@ Module ModMtrx
       Type(Mtrx) AB, Qmat
       Integer(4) j, rank
       Integer(4) n, m
-      Integer(4) ij(1)
       Integer(4) info
       DOUBLE PRECISION cmin
       
@@ -1370,8 +1358,7 @@ Module ModMtrx
         piv = per
       end if
       rank = 0
-      ij = maxloc(c%d)
-      j = ij(1)
+      j = c%maxelement()
       cmin = -c%d(j)
       where(c%d == 0) c%d = cmin
       
@@ -1402,8 +1389,7 @@ Module ModMtrx
         !Recalculate AB
         AB%d(rank,rank:m) = dapr2%d(rank:m)
 
-        ij = maxloc(c%d(rank+1:m))
-        j = ij(1)+rank
+        j = myidmax(m-rank,c%d(rank+1:m))+rank
       end do
       if (present(per)) then
         per = piv
@@ -1433,7 +1419,6 @@ Module ModMtrx
       Type(Mtrx) mat, mat2, da, dapr1, dapr2, dapr3, AB, u1, u2, u, A, bnew, cnew, q, bc
       Integer(4) j, i, i1, j1
       Integer(4) n, m, maxministeps, curministeps
-      Integer(4) ij(2)
       DOUBLE PRECISION tmp, beta, ro, alpha, mu, f, dapr0, aa, bnew0, cnew0
       Integer(4) tmpi
       
@@ -1470,13 +1455,13 @@ Module ModMtrx
       q = u%subarray(n,rank+1)
       do j = 1, m-rank
         mat = da%subarray(n, j+rank, 1, j+rank)
-        mat = (.T.mat) * mat
+        mat = mat .Td. mat
         c%d(j+rank) = mat%d(1,1)
       end do
-      da = (.T.u)*da
+      da = u .Td. da
       do j = 1, m-rank
         mat = da%subarray(rank, j+rank, 1, j+rank)
-        mat = (.T.mat) * mat
+        mat = mat .Td. mat
         c%d(j+rank) = c%d(j+rank) - mat%d(1,1)
       end do
       
@@ -1503,9 +1488,7 @@ Module ModMtrx
             mat%d(i,j-rank) = AB%d(i,j)**2 + c%d(j)*w%d(i)
           end do
         end do
-        ij = maxloc(mat%d)
-        i1 = ij(1)
-        j1 = ij(2)
+        call mat%maxelement(i1,j1)
         ro = sqrt(mat%d(i1,j1))
         j1 = j1 + rank
         call mat%deinit()
@@ -1539,7 +1522,7 @@ Module ModMtrx
               A%d(i,j) = mat2%d(1,j-i+1)
               A%d(i+1,j) = mat2%d(2,j-i+1)
             end do
-            mat2 = q%subarray(n,i+1,1,i) * (.T.mat)
+            mat2 = q%subarray(n,i+1,1,i) .dT. mat
             do j = 1, n
               q%d(j,i) = mat2%d(j,1)
               q%d(j,i+1) = mat2%d(j,2)
@@ -1582,7 +1565,7 @@ Module ModMtrx
             mat = this%subarray(n, m, 1, rank+1)
           end if
           mat2 = q%subarray(n,rank)
-          mat2 = ((.T.bc) - ((.T.bc)*mat2)*(.T.mat2))/aa
+          mat2 = (.T.(bc - (bc .dT. mat2)*mat2))/aa
           dapr2 = mat2 * mat
           call mat%deinit()
           call mat2%deinit()
@@ -1598,7 +1581,7 @@ Module ModMtrx
           mat%d(1,2) = -beta
           mat%d(2,1) = beta
           mat%d(2,2) = alpha
-          mat2 = q%subarray(n,rank+1,1,rank) * (.T.mat)
+          mat2 = q%subarray(n,rank+1,1,rank) .dT. mat
           do j = 1, n
             q%d(j,rank) = mat2%d(j,1)
             q%d(j,rank+1) = mat2%d(j,2)
@@ -1679,9 +1662,7 @@ Module ModMtrx
               mat%d(i,j-rank) = AB%d(i,j)**2 + c%d(j)*w%d(i)
             end do
           end do
-          ij = maxloc(mat%d)
-          i1 = ij(1)
-          j1 = ij(2)
+          call mat%maxelement(i1,j1)
           ro = sqrt(mat%d(i1,j1))
           j1 = j1 + rank
           call mat%deinit()
@@ -1712,7 +1693,7 @@ Module ModMtrx
       Type(Mtrx) mat
       Type(Mtrx) q
       Integer(4) info
-      Integer(4) ij(2), i1, j1, i
+      Integer(4) i1, j1, i
       DOUBLE PRECISION ro, maxro, l1, abij, wi
       Integer(4) cursteps, maxsteps_
       Type(Vector) c3, c4, c1l1, abj, aig, aii, abi
@@ -1737,7 +1718,7 @@ Module ModMtrx
         AB = ABin%subarray(r, db%m + r, 1, r+1)
       else
         call da%qr(q, AI)
-        B = (.T.q) * db
+        B = q .Td. db
         AB = AI%rtsolve(B)
         call dtrtri('U', 'N', r, AI%d, r, info)
       end if
@@ -1753,9 +1734,7 @@ Module ModMtrx
 
       B = (AB .dot. AB)
       call B%update1v(1.0d0,w,c)
-      ij = maxloc(B%d)
-      i1 = ij(1)
-      j1 = ij(2)
+      call B%maxelement(i1,j1)
       ro = sign(sqrt(B%d(i1,j1)),AB%d(i1,j1))
       cursteps = 0
       if (present(maxsteps)) then
@@ -1821,9 +1800,7 @@ Module ModMtrx
 
         B = (AB .dot. AB)
         call B%update1v(1.0d0,w,c)
-        ij = maxloc(B%d)
-        i1 = ij(1)
-        j1 = ij(2)
+        call B%maxelement(i1,j1)
         ro = sign(sqrt(B%d(i1,j1)),AB%d(i1,j1))
         cursteps = cursteps + 1
       end do
@@ -1855,7 +1832,7 @@ Module ModMtrx
       Type(Mtrx) mat
       Type(Mtrx) q
       Integer(4) info
-      Integer(4) ij(2), i1, j1, i
+      Integer(4) i1, j1, i
       DOUBLE PRECISION ro, maxro, l1, abij, wi
       Integer(4) cursteps, maxsteps_
       Type(Vector) c3, c4, c1l1, c1l2, abj, aig, aii, abi!, ca, cb
@@ -1880,7 +1857,7 @@ Module ModMtrx
         AB = ABin%subarray(r, db%m + r, 1, r+1)
       else
         call da%qr(q, AI)
-        B = (.T.q) * db
+        B = q .Td. db
         AB = AI%rtsolve(B)
         call dtrtri('U', 'N', r, AI%d, r, info)
       end if
@@ -1896,9 +1873,7 @@ Module ModMtrx
 
       B = (AB .dot. AB)
       call B%update1v(1.0d0,w,c)
-      ij = maxloc(B%d)
-      i1 = ij(1)
-      j1 = ij(2)
+      call B%maxelement(i1,j1)
       ro = sign(sqrt(B%d(i1,j1)),AB%d(i1,j1))
       cursteps = 0
       if (present(maxsteps)) then
@@ -1976,9 +1951,7 @@ Module ModMtrx
 
         B%d(:,:) = AB%d(:,:)**2
         call B%update1v(1.0d0,w,c)
-        ij = maxloc(B%d)
-        i1 = ij(1)
-        j1 = ij(2)
+        call B%maxelement(i1,j1)
         ro = sign(sqrt(B%d(i1,j1)),AB%d(i1,j1))
         cursteps = cursteps + 1
       end do
@@ -2024,8 +1997,7 @@ Module ModMtrx
         !Add columns
           A = this%subarray(l, cr-1)
           C = this%subarray(l, n)
-          C = A .Id. C
-          C = .T.C
+          C = .T.(A .Id. C)
         end if
         call LB%init(n)
         do i1 = 1, n
@@ -2033,7 +2005,7 @@ Module ModMtrx
             LB%d(i1) = LB%d(i1) + C%d(i1,j1) ** 2
           end do
         end do
-        call LB%maxelement(i)
+        i = LB%maxelement()
         call LB%deinit()
         call this%swap(tm, i, cr)
       end do
@@ -2102,7 +2074,7 @@ Module ModMtrx
     !        ai = this%subarray(k,l)
     !        call ai%svd(u,s,v)
     !        v = v%subarray(r, l)
-    !        cols = cols*(.T.v)
+    !        cols = cols .dT. v
     !        call perm1%perm(this%n)
     !        call perm2%perm(this%m)
     !        call cols%maxvol251(1,r,k,0,perm1,perm2,curperm,k)
@@ -2114,7 +2086,7 @@ Module ModMtrx
     !        ai = this%subarray(k,l)
     !        call ai%svd(u,s,v)
     !        u = u%subarray(k, r)
-    !        rows = (.T.u)*rows
+    !        rows = u .Td. rows
     !        call perm1%perm(this%n)
     !        call perm2%perm(this%m)
     !        call rows%maxvol251(2,r,l,0,perm1,perm2,curperm,l)
@@ -2293,21 +2265,23 @@ Module ModMtrx
   
     function mtrx_tauinverse(this, tau) Result(res)
       Class(Mtrx), intent(in) :: this
-      Type(Mtrx) :: u, s, vt, res
+      Type(Mtrx) :: u, vt, res
+      Type(Vector) s
       DOUBLE PRECISION tau
       Integer(4) n, i
       call this%svd(u, s, vt)
       n = min(this%n, this%m)
       do i = 1, n
-        if (s%d(i, i) > tau*s%d(1, 1)) then
-          s%d(i, i) = 1.0d0 / s%d(i, i)
+        if (s%d(i) > tau*s%d(1)) then
+          s%d(i) = 1.0d0 / s%d(i)
         else
-          s%d(i, i) = 0
+          s%d(i) = 0
         end if
       end do
-      res = (.T.vt) * (.T.s) * (.T.u)
+      res = .T.(u*(s .dot. vt))
     end
   
+    !Rewrite with LQ, make nonrecursive, replace LU with QR
     recursive function mtrx_pinverse(this) Result(res)
       Class(Mtrx), intent(in) :: this
       Type(Mtrx) :: res
@@ -2334,7 +2308,7 @@ Module ModMtrx
         Deallocate(ipiv)
       else
         call this%qr(q, res)
-        res = (.I.res)*(.T.q)
+        res = (.I.res) .dT. q
       end if
     end
     
@@ -2714,7 +2688,7 @@ Module ModMtrx
       call piv%init(m)
       do j = 1, m
         mat = this%subarray(n, j, 1, j)
-        mat = (.T.mat) * mat
+        mat = mat .Td. mat
         c%d(j) = mat%d(1,1)
         piv%d(j) = j
       end do
@@ -2724,7 +2698,7 @@ Module ModMtrx
       else
         maxrank = min(n,m)
       end if
-      call c%maxelement(j)
+      j = c%maxelement()
       tau = c%d(j)
       da = 1.0d0*this
       Allocate(dtau(min(m,n)))
@@ -2753,8 +2727,8 @@ Module ModMtrx
         end do
         call v%deinit()
         mat = da%subarray(n,m,rank,rank)
-        !mat = mat - beta*mat2*((.T.mat2)*mat)
-        call mat%update1v(-1.0d0*beta,tovec(mat2),tovec((.T.mat2)*mat))
+        !mat = mat - beta*mat2*(mat2 .Td. mat)
+        call mat%update1v(-1.0d0*beta,tovec(mat2),tovec(mat2 .Td. mat))
         do j = rank, m
           do i = rank, n
             da%d(i,j) = mat%d(i-rank+1,j-rank+1)
@@ -2837,7 +2811,7 @@ Module ModMtrx
       call piv%init(m)
       do j = 1, m
         mat = this%subarray(n, j, 1, j)
-        mat = (.T.mat) * mat
+        mat = mat .Td. mat
         c%d(j) = mat%d(1,1)
         piv%d(j) = j
       end do
@@ -2851,7 +2825,7 @@ Module ModMtrx
         maxrank = min(n,m)
       end if
       maxministeps = floor(log(1.0d0*m)/log(2.0d0))+1
-      call c%maxelement(j)
+      j = c%maxelement()
       tau = c%d(j)
       da = 1.0d0*this
       q = eye(n)
@@ -2882,8 +2856,8 @@ Module ModMtrx
         end do
         call v%deinit()
         mat = da%subarray(n,m,rank,rank)
-        !mat = mat - beta*mat2*((.T.mat2)*mat)
-        call mat%update1v(-1.0d0*beta,tovec(mat2),tovec((.T.mat2)*mat))
+        !mat = mat - beta*mat2*(mat2 .Td. mat)
+        call mat%update1v(-1.0d0*beta,tovec(mat2),tovec(mat2 .Td. mat))
         do j = rank, m
           do i = rank, n
             da%d(i,j) = mat%d(i-rank+1,j-rank+1)
@@ -2893,7 +2867,7 @@ Module ModMtrx
           da%d(i+rank-1, rank) = 0.0d0
         end do
         mat = q%subarray(n,n,1,rank)
-        !mat = mat - (mat*(beta*mat2))*(.T.mat2)
+        !mat = mat - ((mat*(beta*mat2)) .dT. mat2)
         call mat%update1v(-1.0d0*beta,tovec(mat*mat2),tovec(mat2))
         do j = rank, n
           do i = 1, n
@@ -2984,7 +2958,7 @@ Module ModMtrx
               da%d(i,j) = mat2%d(1,j-i+1)
               da%d(i+1,j) = mat2%d(2,j-i+1)
             end do
-            mat2 = q%subarray(n,i+1,1,i) * (.T.mat)
+            mat2 = q%subarray(n,i+1,1,i) .dT. mat
             do j = 1, n
               q%d(j,i) = mat2%d(j,1)
               q%d(j,i+1) = mat2%d(j,2)
@@ -3011,8 +2985,8 @@ Module ModMtrx
           end do
           call v%deinit()
           mat = da%subarray(n,m,rank,rank)
-          !mat = mat - beta*mat2*((.T.mat2)*mat)
-          call mat%update1v(-1.0d0*beta,tovec(mat2),tovec((.T.mat2)*mat))
+          !mat = mat - beta*mat2*(mat2 .Td. mat)
+          call mat%update1v(-1.0d0*beta,tovec(mat2),tovec(mat2 .Td. mat))
           do j = rank, m
             do i = rank, n
               da%d(i,j) = mat%d(i-rank+1,j-rank+1)
@@ -3022,7 +2996,7 @@ Module ModMtrx
             da%d(i+rank-1, rank) = 0.0d0
           end do
           mat = q%subarray(n,n,1,rank)
-          !mat = mat - (mat*(beta*mat2))*(.T.mat2)
+          !mat = mat - ((mat*(beta*mat2)) .dT. mat2)
           call mat%update1v(-1.0d0*beta,tovec(mat*mat2),tovec(mat2))
           do j = rank, n
             do i = 1, n
@@ -3050,7 +3024,7 @@ Module ModMtrx
             da%d(rank,j) = mat2%d(1,j-rank+1)
             da%d(rank+1,j) = mat2%d(2,j-rank+1)
           end do
-          mat2 = q%subarray(n,rank+1,1,rank) * (.T.mat)
+          mat2 = q%subarray(n,rank+1,1,rank) .dT. mat
           do j = 1, n
             q%d(j,rank) = mat2%d(j,1)
             q%d(j,rank+1) = mat2%d(j,2)
@@ -3274,11 +3248,10 @@ Module ModMtrx
         U = vec .dot. U
       else
         call V%random(m,n)
-        V = .T.V
         call U%random(n)
         U = U .dot. vec
       end if
-      call dgemm('N', 'N', U%n, V%m, U%m, 1.0d0, U%d, U%n, V%d, V%n, 0.0d0, this%d, U%n)
+      call dgemm('N', 'T', U%n, V%n, U%m, 1.0d0, U%d, U%n, V%d, V%n, 0.0d0, this%d, U%n)
     end
     
     function Mtrx_tovec(this) Result(res)
@@ -3370,6 +3343,7 @@ Module ModMtrx
       endif
     end
     
+    !Rewrite without .T.
     function mtrx_dotinverse(this, m2) Result(res)
       Type(Mtrx), intent(in) :: this, m2
       Type(Mtrx) :: res, q, r
@@ -3379,7 +3353,7 @@ Module ModMtrx
         if (m2%n > m2%m) then
           call m2%qr(q,r)
           r = .T.r
-          res = (.T.(r%ltsolve(.T.this)))*(.T.q)
+          res = .T.(q*(r%ltsolve(.T.this)))
         else
           call m2%lq(r,q)
           r = .T.r
@@ -3398,10 +3372,10 @@ Module ModMtrx
       if (this%n == m2%n) then
         if (this%n > this%m) then
           call this%qr(q,r)
-          res = r%rtsolve((.T.q)*m2)
+          res = r%rtsolve(q .Td. m2)
         else
           call this%lq(r,q)
-          res = (.T.q)*r%ltsolve(m2)
+          res = q .Td. r%ltsolve(m2)
         end if
       else
         print *, "error inverse_mul_mtrx"
@@ -3606,7 +3580,7 @@ Module ModMtrx
       !endif
     end
   
-    !Add .dT. for transpose and check for size to do matrix-vector multiplication.
+    !Check for size to do matrix-vector multiplication if one (or both) of matrices are vectors
     function mtrx_mmtr(this, m2) Result(res)
       Type(Mtrx), intent(in) :: this
       Type(Mtrx), intent(in) :: m2
@@ -3615,10 +3589,40 @@ Module ModMtrx
       res%m = m2%m
       !if (this%m == m2%n) then
         !res%d = matmul(this%d, m2%d)
-        Allocate(res%d(this%n, m2%m))
-        call dgemm('N', 'N', this%n, m2%m, this%m, 1.0d0, this%d, this%n, m2%d, m2%n, 0.0d0, res%d, this%n)
+        Allocate(res%d(res%n, res%m))
+        call dgemm('N', 'N', res%n, res%m, this%m, 1.0d0, this%d, this%n, m2%d, m2%n, 0.0d0, res%d, res%n)
       !else
       !  print *, "error mul_mtrx", this%m, m2%n
+      !endif
+    end
+    
+    function mtrx_tmmtr(this, m2) Result(res)
+      Type(Mtrx), intent(in) :: this
+      Type(Mtrx), intent(in) :: m2
+      Type(Mtrx) :: res
+      res%n = this%m
+      res%m = m2%m
+      !if (this%n == m2%n) then
+        !res%d = matmul(this%d, m2%d)
+        Allocate(res%d(res%n, res%m))
+        call dgemm('T', 'N', res%n, res%m, this%n, 1.0d0, this%d, this%n, m2%d, m2%n, 0.0d0, res%d, res%n)
+      !else
+      !  print *, "error mul_mtrx", this%n, m2%n
+      !endif
+    end
+    
+    function mtrx_mmtrt(this, m2) Result(res)
+      Type(Mtrx), intent(in) :: this
+      Type(Mtrx), intent(in) :: m2
+      Type(Mtrx) :: res
+      res%n = this%n
+      res%m = m2%n
+      !if (this%m == m2%m) then
+        !res%d = matmul(this%d, m2%d)
+        Allocate(res%d(res%n, res%m))
+        call dgemm('N', 'T', res%n, res%m, this%m, 1.0d0, this%d, this%n, m2%d, m2%n, 0.0d0, res%d, res%n)
+      !else
+      !  print *, "error mul_mtrx", this%m, m2%m
       !endif
     end
     

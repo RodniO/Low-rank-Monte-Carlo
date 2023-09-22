@@ -185,7 +185,7 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Type(Mtrx), intent(in) :: param !Matrix parameters
   Integer(4), intent(in) :: Ni, Nj !Matrix sizes
-  Integer(4) :: MaxRank !Input: maximum rank; Output: final rank
+  Integer(4), intent(in) :: MaxRank !Maximum rank
   Integer(4), intent(in) :: jpmax_ !Number of starting columns; 0 is adaptive
   Type(Mtrx), intent(out) :: U, V !Output low-rank factors
   Type(IntVec), intent(in) :: per !Permutation to select starting rows (should be random)
@@ -208,7 +208,13 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
   Double precision MaxElC, MaxElR !Max element in column and row
   Double precision rho !rho used
   Double precision err_bound !Error bound
+  
+  !Double precision, allocatable :: uvec(:), vvec(:) !Vectors for F-norm update
+  !Double precision fnorm !Current Frobenius norm
+  !Currently not used, because too expensive
        
+  Double precision, allocatable :: tmp_array(:,:) !For copying
+  
   Integer(4) i, j, s !Indices
        
   if ((Ni <= 0) .or. (Nj <= 0) .or. (maxrank <= 0) .or. (jpmax_ < 0)) then
@@ -237,6 +243,16 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
     adaptive = .true.
   else
     adaptive = .false.
+  end if
+  
+  if ((adaptive) .and. (maxrank*2 > Nj)) then
+    print *, 'Adaptive starting columns number in ACA may exceed total number of columns!'
+  end if
+  if (maxrank + jpmax > Nj) then
+    print *, 'Number of used and starting columns in ACA may exceed total number of columns!'
+  end if
+  if (maxrank > min(Ni,Nj)) then
+    print *, 'Maximum rank in ACA exceeds total number of rows or columns!'
   end if
 
   call U%init(Ni,maxrank)
@@ -387,9 +403,7 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
     end if
     if (NSkel > 1) then
       if (abs(MaxElC) < err_bound) then
-        U%d(:,NSkel) = 0
-        V%d(:,NSkel) = 0
-        MaxRank = NSkel-1
+        Nskel = NSkel-1
         exit
       end if
     end if
@@ -403,9 +417,7 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
       V%d(:,NSkel) = ElemS*V%d(:,NSkel)
     else
       print *, 'Zero Skeleton encountered!'
-      U%d(:,NSkel) = 0
-      V%d(:,NSkel) = 0
-      MaxRank = NSkel-1
+      NSkel = NSkel-1
       exit
     end if 
 
@@ -415,6 +427,16 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
     jNs(NSkel) = jN
 
   end do
+  
+  if (NSkel < maxrank) then
+    Allocate(tmp_array(Ni,NSkel))
+    call dlacpy('A', Ni, NSkel, U%d, Ni, tmp_array, Ni)
+    U = tmp_array
+    Allocate(tmp_array(Nj,NSkel))
+    call dlacpy('A', Nj, NSkel, V%d, Nj, tmp_array, Nj)
+    V = tmp_array
+  end if
+  
   Deallocate(KnC,KpC,jPs,iNs,jNs)
 end
   
@@ -558,7 +580,7 @@ subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR, ca)
   !Can be applied to the entire matrix like A%umaxvol2 too, if necessary.
   call C%umaxvol2(1, rank, k, per1, ca_)
   !2 indicates that we swap columns (1 if rows)
-  !1 indicates that our rows are already multiplied be A^-1 (0 if not)
+  !.true. indicates that our rows are already multiplied by A^-1 (.false. if not)
   call UR%umaxvol2(2, rank, l, per2, .true.)
   !We now need to use more rows and columns
   C = Acols(Afun, M, l, peri, per2, param)
@@ -571,8 +593,8 @@ subroutine maxvol2(Afun, k, l, per1, per2, param, C, UR, ca)
   s = s%subarray(rank)
   V = V%subarray(rank,l)
   call R%permcols(per2, 2)
-  C = C*(.T.V)
-  UR = (s .dd. (.T.U))*R
+  C = C .dT. V
+  UR = (U .dd. s) .Td. R
   !Multiplication in stable order
   !UR = ((.T.V)*S) * ((.T.U)*R)
 end
@@ -703,8 +725,8 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   s = s%subarray(rank)
   V = V%subarray(rank,l)
   call R%permcols(per2, 2)
-  C = C*(.T.V)
-  UR = (s .dd. (.T.U))*R
+  C = C .dT. V
+  UR = (U .dd. s) .Td. R
 end
 
 !Truncated SVD on CUR
@@ -838,8 +860,8 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
   call R%permcols(per2, 2)
   U = U%subarray(k3,cur)
   V = s%subarray(cur) .dot. V%subarray(cur,k3)
-  C = C*(.T.V)
-  AR = (.T.U)*R
+  C = C .dT. V
+  AR = U .Td. R
   
   if (cur > rank) then
     call C%halfqr(Q1, tau, R1)
@@ -912,8 +934,8 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
     call R%permcols(per2, 2)
     U = U%subarray(k3,cur)
     V = s%subarray(cur) .dot. V%subarray(cur,k3)
-    C = C*(.T.V)
-    AR = (.T.U)*R
+    C = C .dT. V
+    AR = U .Td. R
   
     call TruncateCUR(C, AR, rank)
     eps2 = epsmult*epsmin/sqrt(badstot)
@@ -938,7 +960,7 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
         end do
       end do
       call EU%halfqr(Q1, tau, R1)
-      R = EV*(.T.R1)
+      R = EV .dT. R1
       epsmin = max(R%fnorm(),normf*eps/10.0d0*sqrt(badstot))
     
       if (verbose > 1) then

@@ -2,10 +2,6 @@ Module ModVec
   USE ModIntVec
 
   !Wrapper for BLAS vector subroutines
-
-  !Useful constants
-  DOUBLE PRECISION, parameter :: eps = 1.0d-15
-  DOUBLE PRECISION, parameter :: pi = acos(-1.0d0)
   
   !Vector type
   Type Vector
@@ -16,13 +12,14 @@ Module ModVec
       Procedure :: deinit => Vector_destructor !Deallocates
       Procedure :: norm => vec_norm !Euclidean vector norm
       Procedure :: cnorm => vec_cnorm !Infinity (max) norm
+      Procedure :: cnormloc => vec_cnormloc !Infinity (max) norm location
       Procedure :: random => Vec_random !Random unit vector
       Procedure :: badrandom => Vec_badrandom !Vector with uniform random elements
       Procedure :: subarray => Vec_subarray !Returns subvector
       Procedure :: permapp => Vec_permapp !Apply permutation
       Procedure :: swap => Vec_swap !Swap two vector elements
       Procedure :: normalize => Vec_normalize !Normalize vector to unity
-      Procedure :: maxelement => Vec_maxelement !Find position of maximum (absolute value) element
+      Procedure :: maxelement => Vec_maxelement !Find position of maximum element
       Procedure :: house => Vec_house !Create Householder reflection
       Procedure :: sort => Vec_sort !Vector sort
       Procedure :: intarray => Vec_toint !Round values to integers
@@ -98,11 +95,6 @@ Module ModVec
       Class(Vector) :: this
       Integer(4), intent(in) :: a, b
       DOUBLE PRECISION tmp
-      if ((a > this%n) .or. (b > this%n)) then
-        print *, "error in swap_vec", a, b, this%n
-        !call backtrace()
-        stop
-      end if
       tmp = this%d(a)
       this%d(a) = this%d(b)
       this%d(b) = tmp
@@ -198,10 +190,16 @@ Module ModVec
       call dscal(this%n, 1.0d0/this%norm(), this%d, 1)
     end
     
-    subroutine Vec_maxelement(this, k)
+    function Vec_cnormloc(this) Result(k)
       Class(Vector) :: this
-      Integer(4) k, idamax
-      k = idamax(this%n,this%d,1)
+      Integer(4) k
+      k = myidamax(this%n,this%d)
+    end
+    
+    function Vec_maxelement(this) Result(k)
+      Class(Vector) :: this
+      Integer(4) k
+      k = myidmax(this%n,this%d)
     end
     
     subroutine Vec_house(this, v, beta)
@@ -360,8 +358,8 @@ Module ModVec
     
     function vec_cnorm(this) Result(res)
       Class(Vector) :: this
-      DOUBLE PRECISION res, idamax
-      res = idamax(this%n, this%d, 1)
+      DOUBLE PRECISION res
+      res = abs(this%d(myidamax(this%n, this%d)))
     end
     
     elemental function vec_sum(v1, v2) Result(res)
@@ -436,7 +434,6 @@ Module ModVec
       Double precision M, x, ab(16)
       Integer(4) k, kf, ij(1)
   
-      n = size(A)
       M = 0
       do k = 1, n-16, 16
         ab(:) = abs(A(k:k+15))
@@ -448,6 +445,34 @@ Module ModVec
       end do
       kf = n - k + 1
       ab(1:kf) = abs(A(k:n))
+      x = maxval(ab(1:kf))
+      if (x > M) then
+        ij = maxloc(ab(1:kf))+k-1
+        M = x
+      end if
+      res = ij(1)
+    end function
+    
+    function myidmax(n, A) Result(res)
+      Integer(4) n
+      Double precision, intent(in) :: A(n)
+      Integer(4) res
+  
+      Double precision M, x, ab(16)
+      Integer(4) k, kf, ij(1)
+  
+      ij(1) = 1
+      M = A(1)
+      do k = 1, n-16, 16
+        ab(:) = A(k:k+15)
+        x = maxval(ab)
+        if (x > M) then
+          ij = maxloc(ab)+k-1
+          M = x
+        end if
+      end do
+      kf = n - k + 1
+      ab(1:kf) = A(k:n)
       x = maxval(ab(1:kf))
       if (x > M) then
         ij = maxloc(ab(1:kf))+k-1

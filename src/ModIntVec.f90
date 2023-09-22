@@ -2,6 +2,10 @@ Module ModIntVec
 
   !Module for vector of integers
   
+  !Useful constants
+  DOUBLE PRECISION, parameter :: eps = 1.0d-15
+  DOUBLE PRECISION, parameter :: pi = acos(-1.0d0)
+  
   !Vector type
   Type IntVec
     Integer(4) n !Dimension
@@ -12,6 +16,8 @@ Module ModIntVec
       Procedure :: set => intvec_set !Sets d to desired array
       Procedure :: permapp => intvec_permapp !Apply permutation
       Procedure :: perm => intvec_perm !Initialize identity permutation
+      Procedure :: bst => intvec_bst !Binary search tree order
+      Procedure :: cheb => intvec_cheb !Chebyshev polynomial zeros order
       Generic :: permrand => intvec_permrand, intvec_permrandk !Random permutation
       Procedure, private :: intvec_permrand, intvec_permrandk
       Procedure :: swap => intvec_swap !Swap two vector elements
@@ -134,6 +140,76 @@ Module ModIntVec
       Allocate(this%d(n))
       do i = 1, n
         this%d(i) = i
+      end do
+    end
+    
+    subroutine intvec_bst(this, n)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n
+      Integer(4), allocatable :: lengths(:)
+      Integer(4) i, ind
+      this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
+      Allocate(this%d(n))
+      Allocate(lengths(n))
+      ind = 1
+      i = 1
+      this%d(1) = (n+1)/2
+      lengths(1) = n
+      do while (ind < n)
+        if (lengths(i) > 2) then
+          ind = ind + 1
+          this%d(ind) = this%d(i) - (lengths(i)+3)/4
+          lengths(ind) = (lengths(i)-1)/2
+        end if
+        if (lengths(i) > 1) then
+          ind = ind + 1
+          this%d(ind) = this%d(i) + (lengths(i)+2)/4
+          lengths(ind) = lengths(i)/2
+        end if
+        i = i + 1
+      end do
+    end
+    
+    subroutine intvec_cheb(this, n)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n
+      Type(IntVec) bst
+      Double precision, allocatable :: cheb(:)
+      logical, allocatable :: used(:)
+      Double precision phi
+      Integer(4) i, j, ind, nzeros
+      
+      this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
+      Allocate(this%d(n))
+      Allocate(used(n))
+      used = .false.
+      nzeros = floor((pi/4)*n)
+      Allocate(cheb(nzeros))
+      phi = pi/(nzeros+1)
+      do i = 1, nzeros
+        cheb(i) = (1-cos(i*phi))/2
+      end do
+      call bst%bst(nzeros)
+      ind = 1
+      do i = 1, nzeros
+        j = floor(n*cheb(bst%d(i)))+1
+        if (.not.used(j)) then
+          this%d(ind) = j
+          used(j) = .true.
+          ind = ind + 1
+        end if
+      end do
+      do i = 1, n
+        if (.not.used(i)) then
+          this%d(ind) = i
+          ind = ind + 1
+        end if
       end do
     end
   
