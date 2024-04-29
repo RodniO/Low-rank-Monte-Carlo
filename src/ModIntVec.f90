@@ -217,6 +217,9 @@ Module ModIntVec
       Class(IntVec) :: this
       Integer(4) n
       this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
       Allocate(this%d(n))
       this%d(:) = 0
     end
