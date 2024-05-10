@@ -11,7 +11,8 @@ end
 
 subroutine ExampleB()
   USE ModAppr
-  Type(Mtrx) A, U, S, V, param, C, UR, E
+  Type(Mtrx) A, U, V, param, C, UR, E
+  Type(Vector) S
   Type(IntVec) per1, per2
   Integer(4) n, k, maxsteps, maxswaps
   Double precision dsecnd, time
@@ -52,8 +53,8 @@ subroutine ExampleB()
   
   call A%svd(U, S, V)
   !Only leave singular values after k
-  S = S%subarray(n, n, k+1, k+1)
-  print *, 'SVD error:', S%fnorm()
+  S = S%subarray(n, k+1)
+  print *, 'SVD error:', S%norm()
   print *, ''
   
   write(*,'(A,I0)') ' Next we perform MAXVOL approximation of rank ', k+5

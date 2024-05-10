@@ -11,11 +11,12 @@ end
 
 subroutine ExampleA()
   USE ModAppr
-  Type(Mtrx) U, V, A, C, CA, AR, E, Ahat, A1, AB, ABin, R, Q
+  Type(Mtrx) U, V, A, C, CA, AR, E, Ahat, A1, AB, ABin!, R, Q
   Type(IntVec) per1, per2, per3, peri
   Type(Vector) cin, S
   Integer(4) n, k, maxsteps, maxswaps, swapsmade, i
   Double precision dsecnd, time
+  Logical dp
   
   !WELCOMING AND INITIALIZATION
   print *, ''
@@ -59,11 +60,44 @@ subroutine ExampleA()
   print *, 'SVD error:', sqrt(dble(n-k))
   print *, ''
   
-  !MAXVOL
-  print *, 'Next we perform MAXVOL approximation'
+  !ACA
+  print *, 'We start by trying adaptive cross approximation (ACA)'
   !We initialize the perm1 and perm2, which store permutations of rows and columns
   !We apply this permutations to put the maximum volume submatrix in the top left corner.
   !Some algorithms do it automatically.
+  call per1%perm(n)
+  call per2%perm(n)
+  
+  !Let's calculate the time
+  time = dsecnd()
+  
+  !Find dominant k by k submatrix \hat A and construct C \hat A^{-1} R approximation
+  !In case of ACA per1 is also used to select "test" rows. We use only 1
+  call ACA(Aelem, A, n, n, k, 1, C, AR, per1, iNs_ = per2, jNs_ = per3)
+  AR = .T.AR
+  
+  !Can also be used in combination with maxvol2 (uncomment to do it)
+  !call per2%extend(n)
+  !call per3%extend(n)
+  !call C%permrows(per2, 1)
+  !call AR%permcols(per3, 1)
+  !C = .T.C
+  !Ahat = C%subcols(k)
+  !C = Ahat%rtsolve(C)
+  !C = .T.C
+  !Ahat = AR%subcols(k)
+  !AR = Ahat%rtsolve(AR)
+  !call maxvol2(Aelem, 2*k, 2*k, per2, per3, A, C, AR, .true.)
+  
+  time = dsecnd() - time
+  print *, 'ACA time:', time
+  
+  E = A - C*AR
+  print *, 'ACA error:', E%fnorm()
+  print *, ''
+  
+  !MAXVOL
+  print *, 'Next we perform MAXVOL approximation'
   call per1%perm(n)
   call per2%perm(n)
   
@@ -109,7 +143,8 @@ subroutine ExampleA()
   time = dsecnd()
   
   !Large projective volume submatrix search
-  call maxvolproj(Aelem, n, n, k, 2*k, 2*k, per1, per2, A, C, AR, maxsteps, maxswaps)
+  !We set accuracy type to 0, since we expect relative error larger than 10^-9
+  call maxvolproj(Aelem, n, n, k, 2*k, 2*k, per1, per2, A, C, AR, maxsteps, maxswaps, acc_type = 0)
   
   time = dsecnd() - time
   print *, 'MAXVOL-PROJ time:', time
@@ -136,26 +171,33 @@ subroutine ExampleA()
   call A1%copy(A)
   !We will use pre-maxvol to decrease time and increase accuracy
   !ABin and cin will be passed to Dominant-R to remove initialization of AB and c
-  call A1%premaxvol(k, per2, ABin, cin)
+  !Again, we use accuracy type equal to 0. Using dp one can check that error less than 10^-9 cant be reached with k columns
+  call A1%premaxvol(k, per2, ABin, cin, dp = dp, acc_type = 0)
   !Let's limit ourselves to 2*k swaps
-  call A1%dominantr(2, k, n, per2, swapsmade, 2*k, Ahat, AB, ABin, cin)
+  call A1%dominantr(2, k, n, per2, swapsmade, 2*k, Ahat, AB, ABin, cin, dp = dp, acc_type = 0)
   
-  Ahat = .T.Ahat
+  !Uncomment to construct incomplete QR instead of CC^+A.
+  !In case acc_type = 0, but dp turned out to be .true., it is better to use QR.
+  !Ahat = .T.Ahat
   !We do not need Q; cin and Q are dummy variables here
-  call Ahat%halfLQ(R, cin, Q)
-  R = .T.R
-  C = Acols(Aelem, N, k, peri, per2, A)
-  Q = C*R
+  !call Ahat%halfLQ(R, cin, Q)
+  !R = .T.R
+  !C = Acols(Aelem, N, k, peri, per2, A)
+  !Q = C*R
   do i = 1, k
     AR%d(i,i) = 1.0d0
   end do
   AR%d(:,k+1:n) = AB%d(:,1:n-k)
-  AR = R%rtsolve(AR)
+  !AR = R%rtsolve(AR)
   call AR%permcols(per2, 2)
+  
+  Ahat = A1%subcols(k)
   
   time = dsecnd() - time
   print *, 'DOMINANT-R RRQR time:', time
   
-  E = A - Q*AR
+  E = A - Ahat*AR
+  !Uncomment to construct incomplete QR instead of CC^+A.
+  !E = A - Q*AR
   print *, 'DOMINANT-R RRQR error:', E%fnorm()
 end

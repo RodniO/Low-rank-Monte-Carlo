@@ -58,7 +58,8 @@ subroutine ExampleP()
   !Let's calculate the time
   time = dsecnd()
   
-  call PositCUR(Exp_elem, param, n, n, k, k+k/2, 3*k, 0.0d0, 0.0d0, 1.0d0, C, UR, 0)
+  !We use acc_type=0 to make it faster (it relies on premaxvol)
+  call PositCUR(Exp_elem, param, n, n, k, 2*k, 3*k, 0.0d0, 0.0d0, 1.0d0, C, UR, 0, acc_type = 0)
   
   time = dsecnd() - time
   print *, 'Approximation time:', time

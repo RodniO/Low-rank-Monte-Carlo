@@ -1533,12 +1533,12 @@ subroutine MonteDSMCsphere(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas
   end do
 !   close(2)
 !   close(3)
+  n0 = (n0*np)/np0
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd()-cursec
     end if
     print *, 'Collisions', step
-    n0 = (n0*np)/np0
     print *, 'Number density', n0
     print *, 'DONE'
   end if
@@ -2163,13 +2163,13 @@ subroutine MonteTemp(nv0, nvi, temps, maxtime, lambda, apar, verbose)
     end if
   end do
 !   close(2)
+  nv0 = nv1*np
+  
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd() - dstart
     end if
     print *, 'Collisions', step
-  
-    nv0 = nv1*np
   
     print *, 'Number density', nv0
     tau = 0
@@ -2363,14 +2363,13 @@ subroutine MonteSimple(nv0, nvi, maxtime, verbose)
     end if
   end do
 !   close(2)
+  nv0 = nv1*np
+  
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd() - dstart
     end if
     print *, 'Collisions', step
-      
-    nv0 = nv1*np
-  
     print *, 'Number density', nv0
     print *, 'Maxmass', maxmass
     print *, 'DONE'
@@ -2529,15 +2528,14 @@ subroutine MonteSimplePart(nv0, nvi, maxtime, verbose)
     end if
   end do
 !   close(2)
+  nv0 = nv1*np
+  
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd() - dstart
     end if
     
     print *, 'Collisions', step
-  
-    nv0 = nv1*np
-  
     print *, 'Number density', nv0
     print *, 'DONE'
   end if
@@ -3398,13 +3396,13 @@ subroutine MonteWagnerRanked(r, nv0, nvi, temps, maxtime, lambda, apar, verbose)
     end if
   end do
 !   close(2)
+  nv0 = nv1*np
+  
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd() - dstart
     end if
     print *, 'Collisions', step
-  
-    nv0 = nv1*np
   
     print *, 'Number density', nv0
     print *, 'Tavg', tavg
@@ -3748,10 +3746,11 @@ subroutine MonteWalker(nv0, nvi, maxtime, verbose)
     
   end do
 !   close(2)
+  nv0 = nv1*np
+  
   if (verbose > 0) then
     print *, 'Time passed', dsecnd() - dstart
     print *, 'Collisions', step-1
-    nv0 = nv1*np
     print *, 'Number density', nv0
     print *, 'Maxmass, Parts, Updates', maxmass, maxpartof**2, totupdates
     print *, 'DONE'
@@ -3989,14 +3988,13 @@ subroutine MonteWagnerSimple(nv0, nvi, maxtime, verbose)
     end if
   end do
 !   close(2)
+  nv0 = nv1*np
+ 
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd() - dstart
     end if
     print *, 'Collisions', step
-      
-    nv0 = nv1*np
-  
     print *, 'Number density', nv0
     print *, 'Maxmass', maxmass
     print *, 'DONE'

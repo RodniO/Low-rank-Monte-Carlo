@@ -181,7 +181,7 @@ end
 !Adaptive Cross. Improved code of Stanislav Stavtsev. Unlike versions by Stavtsev, Savostianov and Bebendorf,
 !uses rook pivoting instead of column pivoting, extends it to more starting columns and adaptive starting columns
 !and allows rho-locally maximum search.
-subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, abs_err)
+subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, abs_err, iNs_, jNs_)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Type(Mtrx), intent(in) :: param !Matrix parameters
   Integer(4), intent(in) :: Ni, Nj !Matrix sizes
@@ -192,15 +192,16 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
   Double precision, intent(in), optional :: rho_ !rho-locally maximum
   Double precision, intent(in), optional :: rel_err !Desired relative error
   Double precision, intent(in), optional :: abs_err !Desired absolute error; Max(rel,abs) is chosen
+  Type(IntVec), intent(out), optional :: iNs_, jNs_ !Used rows and columns indices
        
   Type(Mtrx) Up !Starting columns
   Integer(4) jpmax !jpmax used
   Logical adaptive !Whether number of starting rows is increased each iteration
        
-  Logical, allocatable :: KnC(:) !Used columns toggle
-  Integer(4), allocatable :: KpC(:) !Starting columns toggle with indices
+  Logical KnC(Nj) !Used columns toggle
+  Integer(4) KpC(Nj) !Starting columns toggle with indices
   Integer(4), allocatable :: jPs(:) !Starting columns indices
-  Integer(4), allocatable :: iNs(:), jNs(:) !Used rows and columns indices
+  Integer(4) iNs(MaxRank), jNs(MaxRank) !Used rows and columns indices
   Integer(4) jP !New starting column index
   Integer(4) iN, jN !New row and column indices
   Integer(4) NSkel !Current skeletion (submatrix) size
@@ -265,10 +266,6 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
     Allocate(jPs(jpmax))
     call Up%init(Ni,jpmax)
   end if
-  Allocate(KnC(Nj))
-  Allocate(KpC(Nj))
-  Allocate(iNs(maxrank))
-  Allocate(jNs(maxrank))
 
   KnC = .false.
   KpC = 0
@@ -437,7 +434,18 @@ subroutine ACA(Afun, param, Ni, Nj, MaxRank, jpmax_, U, V, per, rho_, rel_err, a
     V = tmp_array
   end if
   
-  Deallocate(KnC,KpC,jPs,iNs,jNs)
+  if (present(iNs_)) then
+    Allocate(iNs_%d(NSkel))
+    iNs_%n = NSkel
+    iNs_%d(:) = iNs(:NSkel)
+  end if
+  if (present(jNs_)) then
+    Allocate(jNs_%d(NSkel))
+    jNs_%n = NSkel
+    jNs_%d(:) = jNs(:NSkel)
+  end if
+  
+  Deallocate(jPs)
 end
   
 !Simplest CUR approximation with U = \hat A^{-1}
@@ -601,7 +609,7 @@ end
 
 !CUR with arbitrary number of rows and columns
 !Can be used to improve maxvol/maxvol2 or standalone
-subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps, maxswaps)
+subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps, maxswaps, acc_type)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Integer(4), intent(in) :: M, N !Sizes of A
   Integer(4), intent(in) :: rank !Desired rank
@@ -611,7 +619,10 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   Type(Mtrx), intent(out) :: C !Columns for CUR approximation
   Type(Mtrx), intent(out) :: UR !UR of CUR approximation
   Integer(4), intent(in) :: maxsteps, maxswaps !Maximum number of steps and swaps
+  Integer(4), intent(in), optional :: acc_type !0 - half precision; 1 - full add, half update; 2 - full precision
 
+  Integer(4) acc_add, acc_update !Accuracy in premaxvol and dominantr
+  Logical dp !Whether double precision is needed (reached) in premaxvol
   Type(IntVec) peri !Dummy permutation
   Type(Mtrx) R !Matrix rows
   Type(Mtrx) Ahat !Submatrix \hat A
@@ -620,8 +631,22 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
   Integer(4) swapsmade1, swapsmade2 !Number of swaps in rows and columns
   Integer(4) i, j
   
-  Type(Mtrx) ABout, CMout, Zout
+  Type(Mtrx) ABout, CMout, Zout, Qout
   Type(Vector) cout, Lout
+  
+  acc_add = 2
+  acc_update = 2
+  if (present(acc_type)) then
+    acc_add = acc_type
+    acc_update = acc_type
+    if (acc_type == 1) then
+      acc_update = 0
+    end if
+  end if
+  if (((k >= l) .and. (k <= 3*N)) .or. ((l >= k) .and. (l <= 3*M))) then
+    acc_add = min(1, acc_add)
+    acc_update = min(acc_add, acc_update)
+  end if
   
   !Type(Mtrx) Q1
   !Type(Vector) tau1
@@ -634,20 +659,20 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
     if (k >= l) then
       R = Arows(Afun, k, N, per1, per2, param)
       if (i == 1) then
-        call R%premaxvol(rank, per2, ABout, cout)
-        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+        call R%premaxvol(rank, per2, ABout, cout, Qout = Qout, dp = dp, acc_type = acc_add)
+        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, ABin=ABout, cin=cout, Qin=Qout, dp=dp, acc_type=acc_update)
         swapsmade1 = swapsmade1 + rank
       else
-        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps)
+        call R%dominantr(2, rank, k, per2, swapsmade1, maxswaps, dp = dp, acc_type = acc_update)
       end if
     else
       C = Acolst(Afun, M, l, per1, per2, param)
       if (i == 1) then
-        call C%premaxvol(rank, per1, ABout, cout)
-        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps, ABin = ABout, cin = cout)
+        call C%premaxvol(rank, per1, ABout, cout, dp = dp, acc_type = acc_add)
+        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps, ABin=ABout, cin=cout, Qin=Qout, dp=dp, acc_type=acc_update)
         swapsmade1 = swapsmade1 + rank
       else
-        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps)
+        call C%dominantr(2, rank, l, per1, swapsmade1, maxswaps, dp = dp, acc_type = acc_update)
       end if
     end if
     if ((swapsmade1 == 0) .and. (i > 1)) then
@@ -674,8 +699,8 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
       if (i == 1) then
        R = Arows(Afun, rank, N, per1, per2, param)
        call R%premaxvol(rank, per2, ABout)
-       ABout%d(1:100,1:100) = 0
-       do j = 1, 100
+       ABout%d(1:rank,1:rank) = 0
+       do j = 1, rank
          About%d(j,j) = 1.0d0
        end do
        call ABout%umaxvol2(2, rank, l, per2, .true., R, CMout, Zout, Lout)
@@ -696,12 +721,14 @@ subroutine maxvolproj(Afun, M, N, rank, k, l, per1, per2, param, C, UR, maxsteps
     R = Arows(Afun, k, N, per1, per2, param)
     Ahat = R%subarray(k,rank)
     R = Ahat .Id. R
-    call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps)
+    call R%umaxvol2(2, rank, l, per2, .true., Cout = CMout, Zout = Zout, Lout = Lout)
+    call R%dominantc(2, rank, l, per2, swapsmade2, maxswaps, CMout, Zout, Lout)
   else
     C = Acols(Afun, M, l, per1, per2, param)
     Ahat = C%subarray(rank,l)
     C = C .dI. Ahat
-    call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps)
+    call C%umaxvol2(1, rank, k, per1, .true., Cout = CMout, Zout = Zout, Lout = Lout)
+    call C%dominantc(1, rank, k, per1, swapsmade2, maxswaps, CMout, Zout, Lout)
   end if
   
 !Inverse through SVD of columns C: improve is not observable (need column diagram to see the difference)
@@ -792,7 +819,7 @@ end
 
 !Alternating projections for nonnegative matrix approximation
 !with truncated SVD replaced by CUR
-subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, C, AR, verbose)
+subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, C, AR, verbose, acc_type)
   procedure(elem_fun) :: Afun !Function, returning elements of A
   Type(Mtrx), intent(in) :: param !Parameters for Afun
   Integer(4), intent(in) :: M, N, rank !Sizes of A and the desired rank
@@ -802,6 +829,7 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
   Double precision, intent(in) :: epsmult !Error multiplicator for shift calculation
   Type(Mtrx), intent(out) :: C, AR !Output aprroximation of rank "rank"
   Integer(4), intent(in) :: verbose !0-2; how much to print.
+  Integer(4), intent(in), optional :: acc_type !Accuracy type for premaxvol
   
   Type(Mtrx) C1 !To speed up maxvol2, we save C \hat A^{-1} in C, so C1 is dummy for C
   Integer(4) maxsteps, maxswaps
@@ -811,8 +839,14 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
   Integer(4) i, j, steps, cur, bads
   Double precision eps2, badstot, maxelem_, elem, epsmin, tmp
   Type(Vector) tau, tau2
+  Integer(4) acc_type_
   
   Double precision normf
+  
+  acc_type_ = 1
+  if (present(acc_type)) then
+    acc_type_ = min(acc_type_, acc_type)
+  end if
   
   if (present(maxelem)) then
     maxelem_ = maxelem
@@ -837,9 +871,9 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
     call per1%swap(i,j)
   end do
   R = Arows(Afun, k3, N, per1, per2, param)
-  call R%premaxvol(k2, per2)
-  Ahat = .T.(R%subarray(k3,k2))
-  call Ahat%premaxvol(k2, per1)
+  call R%premaxvol(k2, per2, acc_type = acc_type_)
+  Ahat = .T.(R%subcols(k2))
+  call Ahat%premaxvol(k2, per1, acc_type = acc_type_)
   
   call maxvol(Afun, M, N, k2, per1, per2, param, C1, AR, maxsteps, maxswaps, C)
   call maxvol2(Afun, k3, k3, per1, per2, param, C, AR, .true.)
@@ -1003,14 +1037,14 @@ subroutine PositCUR(Afun, param, M, N, rank, k2, k3, minelem, maxelem, epsmult, 
       call per1%swap(i,j)
     end do
     R = Arows(Afun_uvmod, k3, N, per1, per2, param_uv)
-    call R%premaxvol(k2, per2)
+    call R%premaxvol(k2, per2, acc_type = acc_type_)
     do i = k2+1, k3
       call random_number(tmp)
       j = k2+1 + FLOOR((N-k2)*tmp)
       call per2%swap(i,j)
     end do
     C = Acolst(Afun_uvmod, M, k3, per1, per2, param_uv)
-    call C%premaxvol(k2, per1)
+    call C%premaxvol(k2, per1, acc_type = acc_type_)
     call maxvol(Afun_uvmod, M, N, rank, per1, per2, param_uv, C, AR, maxsteps, maxswaps)
     
   end do

@@ -6,7 +6,8 @@ subroutine ExampleR()
   Double precision q !Sparsity
   Double precision time !Evaluation time
   Type(Mtrx) mat !Matrix to reconstruct
-  Type(Mtrx) U, S, V !SVD factors
+  Type(Mtrx) U, V !SVD factors
+  Type(Vector) S !SVD diagonal
   Type(Mtrx) mask !Sparse mask (zeros and ones)
   Type(SparseRow) KnownSparse !Sparse matrix of known elements
   Type(Mtrx) matmask !Full version of KnownSparse
@@ -33,11 +34,11 @@ subroutine ExampleR()
   !Generating random rank k matrix
   call U%random(n,k)
   call V%random(n,k)
-  call S%init(k,k)
+  call S%init(k)
   do i = 1, k
-    S%d(i,i) = 2.0d0/2.0d0**i
+    S%d(i) = 2.0d0/2.0d0**i
   end do
-  mat = U*S*(.T.V)
+  mat = (U .dot. S)*(.T.V)
   call U%deinit()
   call S%deinit()
   call V%deinit()

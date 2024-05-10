@@ -14,6 +14,8 @@ Module ModIntVec
       Procedure :: init => intvec_constructor !Allocates and initializes with zeros
       Procedure :: deinit => intvec_destructor !Deallocates
       Procedure :: set => intvec_set !Sets d to desired array
+      Procedure :: fromsubset => intvec_fromsubset !Creates permutation from its subarray
+      Procedure :: extend => intvec_extend !Extends subarray to permutation
       Procedure :: permapp => intvec_permapp !Apply permutation
       Procedure :: perm => intvec_perm !Initialize identity permutation
       Procedure :: bst => intvec_bst !Binary search tree order
@@ -56,11 +58,11 @@ Module ModIntVec
       Class(IntVec) :: this
       Integer(4), intent(in) :: a, b
       Integer(4) tmp
-      if ((a > this%n) .or. (b > this%n)) then
-        print *, "error in swap_vec", a, b, this%n
+      !if ((a > this%n) .or. (b > this%n)) then
+      !  print *, "error in swap_vec", a, b, this%n
         !call backtrace()
-        return
-      end if
+      !  return
+      !end if
       tmp = this%d(a)
       this%d(a) = this%d(b)
       this%d(b) = tmp
@@ -217,6 +219,9 @@ Module ModIntVec
       Class(IntVec) :: this
       Integer(4) n
       this%n = n
+      if (allocated(this%d)) then
+        Deallocate(this%d)
+      end if
       Allocate(this%d(n))
       this%d(:) = 0
     end
@@ -243,6 +248,63 @@ Module ModIntVec
       do i = 1, this%n
         res%d(this%d(i)) = i
       end do
+    end
+    
+    subroutine intvec_fromsubset(this, n, k, d)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n, k
+      Integer(4), intent(in) :: d(k)
+
+      Integer(4) i
+      Integer(4) swappedto(k)
+      
+      call this%perm(n)
+      do i = 1, k
+        swappedto(i) = i
+      end do
+      do i = 1, k
+        if (d(i) > k) then
+          swappedto(this%d(i)) = d(i)
+          call this%swap(i,d(i))
+        else
+          swappedto(this%d(i)) = swappedto(d(i))
+          call this%swap(i,swappedto(d(i)))
+          swappedto(d(i)) = i
+        end if
+      end do
+    end
+    
+    subroutine intvec_extend(this, n)
+      Class(IntVec) :: this
+      Integer(4), intent(in) :: n
+
+      Integer(4), allocatable :: newthis(:)
+      Integer(4) i, k, tmp
+      Integer(4), allocatable :: swappedto(:)
+      k = this%n
+      this%n = n
+      Allocate(newthis(n))
+      do i = 1, n
+        newthis(i) = i
+      end do
+      Allocate(swappedto(k))
+      do i = 1, k
+        swappedto(i) = i
+      end do
+      do i = 1, k
+        tmp = newthis(i)
+        if (this%d(i) > k) then
+          newthis(i) = newthis(this%d(i))
+          newthis(this%d(i)) = tmp
+          swappedto(tmp) = this%d(i)
+        else
+          newthis(i) = newthis(swappedto(this%d(i)))
+          newthis(swappedto(this%d(i))) = tmp
+          swappedto(tmp) = swappedto(this%d(i))
+          swappedto(this%d(i)) = i
+        end if
+      end do
+      this%d = newthis
     end
     
     !Create vector of ones or k-th vector of standard basis
