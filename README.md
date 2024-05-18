@@ -1,4 +1,4 @@
-# Projective volume low-rank approximation
+# Low-rank Monte Carlo methods
 
 Hello!
 This repository contains a Fortran code of the low-rank Monte Carlo methods for (generalized) Smoluchowski equations from
