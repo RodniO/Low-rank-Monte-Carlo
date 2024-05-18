@@ -1,15 +1,15 @@
 # Projective volume low-rank approximation
 
 Hello!
-This repository contains a Fortran code of the methods from
-[1] A.I. Osinsky. Rectangular maximum volume and projective volume search algorithms // arXiv 1809.02334 (Submitted on 7 Sep 2018)
+This repository contains a Fortran code of the low-rank Monte Carlo methods for (generalized) Smoluchowski equations from
+[1] A.I. Osinsky. Low-rank Monte Carlo for Smoluchowski-class equations // Journal of Computational Physics 506(1), 112942 (2024).
 
-Also includes matrix completion algorithm based on projective volume from
-[2] O.S. Lebedeva, A.I. Osinsky, S.V. Petrov. Low-Rank Approximation Algorithms for Matrix Completion with Random Sampling // Comput. Math. and Math. Phys. 61, 799–815 (2021).
+and for Boltzmann equations from
+[2] A.S. Bodrova, A.I. Osinsky. Anomalous diffusion in polydisperse granular gases: Monte Carlo simulations // arXiv 2403.13772 (Submitted on 20 Mar 2024).
 
-Module ModAppr contains subroutines for low-rank approximations. Module ModRecon contains subroutines for matrix completion (reconstruction). There are also vector (ModVec) and matrix (ModMtrx) modules, which can be quite useful.
+Module ModMonte.mod contains all the corresponding subroutines. Other modules are from "projective volume low rank" repository (this repository is essentially a fork) and will be used, when ODE solvers for (generalized) Smoluchowski equations are added here.
 
-The use of all of the approximation algorithms is illustrated in incfiles/ExampleA.f90 and incfiles/ExampleB.f90. Nonnegative approximation is illustrated in incfiles/ExampleP.f90. Matrix completion is illustrated in incfiles/ExampleR.f90
+The use of all of the simulation methods is illustrated in incfiles/ExampleM.f90.
 
 To compile and run it, use either
 
@@ -35,4 +35,3 @@ Code uses 'allocatable' arrays, which are usually put in stack. Therefore, for l
 Debug:
 
 debugrun.sh script uses gfortran with debug options to recompile and run everything. Remember to run 'make clean' after debug before running 'make gnu'.
-
