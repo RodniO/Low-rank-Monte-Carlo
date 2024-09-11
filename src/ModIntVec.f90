@@ -18,6 +18,7 @@ Module ModIntVec
       Procedure :: extend => intvec_extend !Extends subarray to permutation
       Procedure :: permapp => intvec_permapp !Apply permutation
       Procedure :: perm => intvec_perm !Initialize identity permutation
+      Procedure :: subarray => intvec_subarray !Returns subvector
       Procedure :: bst => intvec_bst !Binary search tree order
       Procedure :: cheb => intvec_cheb !Chebyshev polynomial zeros order
       Generic :: permrand => intvec_permrand, intvec_permrandk !Random permutation
@@ -26,6 +27,7 @@ Module ModIntVec
       Procedure :: reverse => intvec_reverse !Reverse order of elements
       Procedure :: copy => intvec_copy !Copy vector
       Procedure :: perminv => intvec_perminv !Inverse permutation
+      Procedure :: sort => ivec_sort !Vector sort
   End type
   
   !Turns integer array to IntVec type
@@ -35,6 +37,28 @@ Module ModIntVec
   
   Contains
   !See brief descriptions above
+
+    subroutine ivec_sort(this, per)
+      Class(IntVec) :: this
+      Type(IntVec) :: per
+      call iintvec_sort(this%n, per%d, this%d)
+    end
+    
+    function intvec_subarray(this, n2, n1) Result(res)
+      Class(IntVec), intent(in) :: this
+      Integer(4), intent(in) :: n2 !End index
+      Integer(4), intent(in), optional :: n1 !Start index
+      Integer(4) n1_
+      Type(IntVec) res
+      if (present(n1)) then
+        n1_ = n1
+      else
+        n1_ = 1
+      end if
+      res%n = n2 - n1_ + 1
+      Allocate(res%d(res%n))
+      res%d(:) = this%d(n1_:n2)
+    end
 
     subroutine intvec_permapp(this, per, c)
       Class(IntVec) :: this
@@ -249,6 +273,25 @@ Module ModIntVec
         res%d(this%d(i)) = i
       end do
     end
+    
+    subroutine iintvec_sort(array_size,index,value)
+      integer, intent(in) :: array_size
+      integer, intent(inout) :: index(array_size)
+      Integer(4), intent(in) :: value(array_size)
+      Integer(4) :: QSORT_THRESHOLD = 8
+      include "qsort_inline.inc"
+    contains
+      include "qsort_inline_index.inc"
+      logical &
+      function less_than(a,b)
+        integer, intent(in) :: a,b
+        if ( value(index(a)) == value(index(b)) ) then
+          less_than = index(a) < index(b)
+        else
+          less_than = value(index(a)) < value(index(b))
+        end if
+      end function
+    end subroutine
     
     subroutine intvec_fromsubset(this, n, k, d)
       Class(IntVec) :: this

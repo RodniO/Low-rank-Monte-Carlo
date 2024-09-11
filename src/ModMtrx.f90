@@ -289,9 +289,12 @@ Module ModMtrx
       Type(Mtrx), optional :: addmat
       Integer(4), intent(in), optional :: swapt
       Type(Mtrx), optional :: ABin
+      Type(Mtrx) Ahat
       Type(Vector) CJ, CI
-      Integer(4) n, m, i, j, maxperm, curperm
-      DOUBLE PRECISION CIJ
+      Type(IntVec) ipiv, iper
+      Integer(4) n, m, i, j, maxperm, curperm, info
+      DOUBLE PRECISION CIJ!, dsecnd, time
+      
       n = this%n
       m = this%m
       k = m
@@ -314,7 +317,19 @@ Module ModMtrx
           C%d(i,i) = 1.0d0
         end do
       else
-        C = this .dI. this%subarray(k, k)
+        !C = this .dI. this%subarray(k, k)
+        Ahat = this%subarray(k,k)
+        Ahat = .T.Ahat
+        Allocate(ipiv%d(k))
+        call dgetrf(k, k, Ahat%d, k, ipiv%d, info)
+        call iper%perm(k)
+        do i = 1, k
+          call iper%swap(i,ipiv%d(i))
+        end do
+        Deallocate(ipiv%d)
+        C = this%d(:,iper%d(:))
+        call dtrsm('R', 'L', 'T', 'U', n, k, 1.0d0, Ahat%d, k, C%d, n)
+        call dtrsm('R', 'U', 'T', 'N', n, k, 1.0d0, Ahat%d, k, C%d, n)
       end if
       call C%cnormloc(i,j)
       CIJ = C%d(i, j)
@@ -364,9 +379,11 @@ Module ModMtrx
       Type(Mtrx), optional :: addmat
       Integer(4), intent(in), optional :: swapt
       Type(Mtrx), optional :: ABin
+      Type(Mtrx) Ahat
       Type(Vector) CJ, CI
-      Integer(4) n, m, i, j, maxperm, curperm
-      DOUBLE PRECISION CIJ
+      Integer(4) n, m, i, j, maxperm, curperm, info
+      Integer(4), allocatable :: ipiv(:)
+      DOUBLE PRECISION CIJ!, dsecnd, time
       n = this%n
       m = this%m
       k = m
@@ -389,7 +406,19 @@ Module ModMtrx
           C%d(i,i) = 1.0d0
         end do
       else
-        C = this .dI. this%subarray(k, k)
+        !time = dsecnd()
+        !C = this .dI. this%subarray(k, k)
+        !print *, dsecnd()-time
+        
+        !time = dsecnd()
+        Ahat = this%subarray(k,k)
+        Ahat = .T.Ahat
+        C = .T.this
+        Allocate(ipiv(k))
+        call dgesv(k, n, Ahat%d, k, ipiv, C%d, k, info)
+        Deallocate(ipiv)
+        C = .T.C
+        !print *, dsecnd()-time
       end if
       call C%cnormloc(i,j)
       CIJ = C%d(i, j)
@@ -948,7 +977,7 @@ Module ModMtrx
 !       end if
 !     end
 
-    subroutine mtrx_dominantc(this, t, k, l, per, steps, maxsteps, Cin, Zin, Lin)
+    subroutine mtrx_dominantc(this, t, k, l, per, steps, maxsteps, Cin, Zin, Lin, nai)
       Class(Mtrx) :: this
       Type(Mtrx) :: A, CB, B, Q, R, RL, Z
       Type(IntVec), optional :: per
@@ -959,10 +988,18 @@ Module ModMtrx
       Integer(4), intent(in), optional :: maxsteps
       Type(Mtrx), intent(in), optional :: Cin, Zin
       Type(Vector), intent(in), optional :: Lin
+      Integer(4), intent(in), optional :: nai
       
-      Integer(4) n, m, i, j, tm, maxsteps_, cursteps
-      Integer(4) ij(2)
-      DOUBLE PRECISION k11, k12
+      Integer(4) n, m, i, j, tm, maxsteps_, cursteps, info
+      Integer(4) ij(2), nai_
+      DOUBLE PRECISION k11, k12, rel, tol3z, dlamch
+      
+      nai_ = 0
+      if (present(nai)) then
+        nai_ = nai
+      end if
+      
+      tol3z = dlamch('Epsilon')
       
       n = this%n
       m = this%m
@@ -972,6 +1009,7 @@ Module ModMtrx
       if (l < k) then
         print *, "error in dominantc"
       end if
+      rel = 0.0d0
       if (t .eq. 1) then
       !Work in columns
         tm = 1
@@ -980,6 +1018,7 @@ Module ModMtrx
           R = .T.Cin
           A = R%subarray(k, l)
           Q = .I.A
+          rel = A%fnorm()*Q%fnorm()
         else
           A = this%subarray(l, k)
           CB = this%subarray(n, k)
@@ -987,6 +1026,9 @@ Module ModMtrx
           call dtrsm('R', 'U', 'N', 'N', n, k, 1.0d0, RL%d, k, CB%d, n)
           R = .T.CB
           Deallocate(CB%d)
+          rel = RL%fnorm()
+          call dtrtri('U', 'N', k, RL%d, k, info)
+          rel = rel*RL%fnorm()
         end if
         
         CB%n = n
@@ -1002,6 +1044,7 @@ Module ModMtrx
           A = Cin%subarray(l, k)
           R = .T.Cin
           Q = .I.A
+          rel = A%fnorm()*Q%fnorm()
         else
           A = this%subarray(k, l)
           CB = this%subarray(k, n)
@@ -1009,6 +1052,9 @@ Module ModMtrx
           call dtrsm('L', 'L', 'N', 'N', k, n, 1.0d0, RL%d, k, CB%d, k)
           call R%copy(CB)
           Deallocate(CB%d)
+          rel = RL%fnorm()
+          call dtrtri('U', 'N', k, RL%d, k, info)
+          rel = rel*RL%fnorm()
         end if
         
         CB%n = n
@@ -1023,6 +1069,8 @@ Module ModMtrx
         Z = eye(k)
       end if
       
+      rel = rel*tol3z
+      
       LB%n = n
       if (present(Lin)) then
         LB%d = Lin%d + 1.0d0
@@ -1033,7 +1081,7 @@ Module ModMtrx
       LC%d(:l) = 2.0d0 - LB%d(:l)
       
       call dger(n, l, 1.0d0, LB%d, 1, LC%d, 1, B%d, n)
-      ij = maxloc(B%d(l+1:,:)) !Calculate with myidmax(N, B%d(l+1:,:))
+      ij = maxloc(B%d(l+1:,nai_+1:)) !Calculate with myidmax(N, B%d(l+1:,:))
       i = ij(1)+l
       j = ij(2)
       if (present(maxsteps)) then
@@ -1045,7 +1093,7 @@ Module ModMtrx
       call ZI%init(k)
       call CBI%init(l)
       call CI%init(n)
-      do while (B%d(i,j) > 1.0d0)
+      do while (B%d(i,j) > 1.0d0+rel)
         call this%swap(tm, i, j)
         if (present(per)) then
           call per%swap(i,j)
@@ -1079,7 +1127,7 @@ Module ModMtrx
         
         B%d(l+1:,:) = CB%d(l+1:,:)**2
         call dger(n, l, 1.0d0, LB%d, 1, LC%d, 1, B%d, n)
-        ij = maxloc(B%d(l+1:,:)) !Calculate with myidmax(N, B%d(l+1:,:))
+        ij = maxloc(B%d(l+1:,nai_+1:)) !Calculate with myidmax(N, B%d(l+1:,:))
         i = ij(1)+l
         j = ij(2)
         cursteps = cursteps + 1
@@ -2154,7 +2202,7 @@ Module ModMtrx
       else
         acc_type_ = 2
       end if
-      if ((acc_type_ == 2) .and. & 
+      if ((acc_type_ >= 2) .and. & 
       ((n <= 3*l) .or. ((n <= 4*l) .and. (.not.(present(Qin) .and. (present(Rin) .or. present(ABin))))))) then
         acc_type_ = 1
       end if
@@ -2173,7 +2221,7 @@ Module ModMtrx
         maxro = 1.0d0
       end if
       if (present(ABin)) then
-        if (acc_type_ == 2) then
+        if (acc_type_ >= 2) then
           if (present(Qin)) then
             q = Qin
           else
@@ -2272,7 +2320,7 @@ Module ModMtrx
         call dgemv('N', l, r, -1.0d0, da%d, l, abj%d, 1, 1.0d0, bcolerr%d, 1)
         l1 = bcolerr*bcolerr
         
-        if (acc_type_ == 2) then
+        if (acc_type_ >= 2) then
           call dgemv('T', l, r, 1.0d0, q%d, l, bcolerr%d, 1, 0.0d0, v%d, 1)
           call dgemv('N', l, r, -1.0d0, q%d, l, v%d, 1, 1.0d0, bcolerr%d, 1)
         end if
@@ -2341,7 +2389,7 @@ Module ModMtrx
         call c%update1(-l1, c3 .dot. c4)
         
         !Recalculate Q
-        if (acc_type_ == 2) then
+        if (acc_type_ >= 2) then
           bcolerr%d(:) = bcolerr%d(:)/bcolerr%norm()
           call dgemv('N', l, r, -(1.0d0-abij/ro)/wi, q%d, l, aii%d, 1, sqrt(l1)/ro, bcolerr%d, 1)
           call q%update1v(1.0d0, bcolerr, aii)
@@ -2706,7 +2754,8 @@ Module ModMtrx
       Type(Mtrx) :: res
       Type(Mtrx) q
       Integer(4) n, info
-      DOUBLE PRECISION, Allocatable :: work(:), ipiv(:)
+      DOUBLE PRECISION, Allocatable :: work(:)
+      Integer(4), allocatable :: ipiv(:)
       if (this%n < this%m) then
         res = .T.(.I.(.T.this))
       else if (this%n .eq. this%m) then

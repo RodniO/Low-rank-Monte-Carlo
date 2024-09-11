@@ -121,21 +121,21 @@ subroutine ExampleM()
   print *, ''
   print *, 'Low-rank method (spherically symmetric speeds):'
   call MonteDSMCSphere(n0, nv, temps, 1.0d0, 0.0d0, 0.0d0, 0.0d0, 1)
-!   call nv%init(2**10)
-!   call temps%init(2**10)
-!   nv%d(1) = 999
-!   i = 1
-!   tmpi = 1.0d0
-!   np = nv%d(1)
-!   do while (tmpi > 0)
-!     i = i + 1
-!     tmpi = floor(nv%d(1)*exp(-0.01d0*(i-1)))
-!     nv%d(i) = floor(nv%d(1)*exp(-0.01d0*(i-1)))
-!     np = np + tmpi
-!   end do
-!   temps%d(:) = 1
-!   n0 = 0.1d0
-!   print *, ''
-!   print *, 'Acceptance-rejection method:'
-!   call DSMCup(n0, nv, temps, 1.0d0, 0.0d0, 0.0d0, 0.0d0, 1) !ONLY FOR NO AGGREGATION
+  call nv%init(2**10)
+  call temps%init(2**10)
+  nv%d(1) = 999
+  i = 1
+  tmpi = 1.0d0
+  np = nv%d(1)
+  do while (tmpi > 0)
+    i = i + 1
+    tmpi = floor(nv%d(1)*exp(-0.01d0*(i-1)))
+    nv%d(i) = floor(nv%d(1)*exp(-0.01d0*(i-1)))
+    np = np + tmpi
+  end do
+  temps%d(:) = 1
+  n0 = 0.1d0
+  print *, ''
+  print *, 'Acceptance-rejection method:'
+  call DSMCup(n0, nv, temps, 1.0d0, 0.0d0, 0.0d0, 0.0d0, 1) !ONLY FOR NO AGGREGATION
 end

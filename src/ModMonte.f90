@@ -97,7 +97,7 @@ Module ModMonte
   
   !Basic functions, can be assigned by user. See functions with 0 in name for description.
   !For DSMC
-  public :: MonteDSMC, MonteDSMCsphere!, DSMCup
+  public :: MonteDSMC, MonteDSMCsphere, MonteDSMCpart, DSMCup
   procedure(UV_int), pointer :: Uspeed => Uspeed0, Vspeed => Vspeed0
   procedure(Kernel_int), pointer :: DSMCKernel => DSMCKernel0
   procedure(e_int), pointer :: ecoef => ecoef0
@@ -437,6 +437,488 @@ end
   
   !GENERAL SUBROUTINES
 
+!DOES NOT WORK FOR AGGREGATION
+!Instead of computing u, v and DSMCKernel we need DSMCKernelOne, since maxmass can be large and is hard to update
+subroutine MonteDSMCpart(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose)
+  Double precision, intent(inout) :: n0 !Total number density; IN and OUT
+  Type(IntVec) :: partofsize !Numbers of particles; IN and OUT
+  Type(Vector) :: temps !Temperatures of each size; IN and OUT
+  Double precision, intent(in) :: maxtime !Max laboratory time
+  Double precision, intent(in) :: gbig, gsmall, tmolgas !Thermostat parameters
+  Integer(4), intent(in) :: verbose !0 - only in files; 1 - start and finish; 2 - every Nh steps
+  
+  Integer(4) np, np0 !Current and initial total number of particles
+  Integer(4), parameter :: partmin = 4 !Minimum array size for particles of each mass
+  Double precision e !Restitution coefficient
+  Double precision tavg !Current average temperature
+  Type(Vector) vx, vy, vz !Particle speeds
+  Type(Vector) vs !Particle squared speed
+  Type(Vector) vmaxvec !Maximum speed for each size
+  Type(Mtrx) u, v, ui, vi !Low-rank factors
+  Integer(4), allocatable :: sizestart(:) !Start index of size-i particles in the initial array
+  
+  Double precision curtime !Current system time
+  Double precision ex, ey, ez !Collision direction components
+  Double precision dx, dy, dz, vcs, vcs1, vcs2 !Temporaries for speed values
+  Double precision cursec !Current time
+  Double precision dsecnd !LAPACK procedure for time measurement
+  Integer(4) maxmass !Maximum cluster mass in the system
+  Integer(4) treestart !Start index of segment tree data
+  Double precision ran, ran1, ran2, randi !Random numbers
+  Double precision totalrate !Total collision rate
+  Integer(4) r, curr !Rank, iteration over ranks
+  Type(Vector) usum, vsum, totalvec !Vectors, containing sums of collision rates
+  Type(Mtrx) utree, vtree !Segment trees
+  Integer(8) Nh !Update output every Nh steps
+  Integer(8) Nht !Apply thermostat every Nht steps
+  Integer(8) step !Current step
+  Double precision lasttime !System time at last thermostat application
+  Double precision tempsum !Total kinetic energy (sum of weighted temperatures)
+  Type(IntVec) vmass !Array of particle masses
+  Type(Vector) vmassvec !Real array of particle masses
+  Type(Mtrx) sm !Helps to select collision direction
+  Double precision timeold, timecur !Saves
+  Integer(4) i, j, i0, j0, i1, j1, tmpi, tmpi2, i2, j2, k2 !Indices
+  
+  !Temporaries
+  Double precision tau, tau2, tauexp, tmp
+  Integer(4), allocatable :: tmpint(:)
+  Type(Vector) tmpvec, uioi, uioj, uiok, vioi, vioj, viok
+  
+  Integer(4) npt
+  
+  maxmass = partofsize%n
+  Allocate(tmpint(maxmass))
+  tmpint(1:partofsize%n) = partofsize%d(1:partofsize%n)
+  tmpint(partofsize%n+1:) = 0
+  partofsize = tmpint
+  Deallocate(tmpint)
+  call tmpvec%copy(temps)
+  call temps%deinit()
+  call temps%init(maxmass)
+  temps%d(1:tmpvec%n) = tmpvec%d(1:tmpvec%n)
+  call tmpvec%deinit()
+  where(partofsize%d==0) temps%d = 0
+  
+  np = sum(partofsize%d)
+  npt = max(16, ibset(0, 2*((bit_size(np-1) - leadz(np-1) + 1)/2)))
+  np0 = np
+  
+  !Update time
+  Nh = np!/20!5
+  !Thermostat time
+  Nht = np!/100
+  
+  Allocate(sizestart(maxmass+1))
+  call vmass%init(npt+1)
+  call vmassvec%init(npt)
+  sizestart(1) = 1
+  i = 1
+  j1 = 1
+  do while (i <= maxmass)
+    tmpi = partofsize%d(i)
+    do j = j1, j1+tmpi-1
+      vmass%d(j) = i
+    end do
+    j1 = j1 + tmpi
+    i = i + 1
+    sizestart(i) = sizestart(i-1) + tmpi
+  end do
+  
+  treestart = 0
+  !Calculate geometric series
+  i1 = 1
+  do while (i1*4 < npt)
+    treestart = treestart + i1
+    i1 = i1*4
+  end do
+
+  call vx%init(np)
+  call vy%init(np)
+  call vz%init(np)
+  call vs%init(np+1)
+  call sm%init(3,2)
+  
+  do i = 1, np
+    vx%d(i) = ggrnd()
+    vy%d(i) = ggrnd()
+    vz%d(i) = ggrnd()
+  end do
+  
+  do j = 1, maxmass
+    ex = 0.0d0
+    ey = 0.0d0
+    ez = 0.0d0
+    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
+      ex = ex + vx%d(i)
+      ey = ey + vy%d(i)
+      ez = ez + vz%d(i)
+    end do
+    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
+      vx%d(i) = vx%d(i) - ex/partofsize%d(j)
+      vy%d(i) = vy%d(i) - ey/partofsize%d(j)
+      vz%d(i) = vz%d(i) - ez/partofsize%d(j)
+    end do
+    tmp = 0.0d0
+    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
+      tmp = tmp + vx%d(i)**2 + vy%d(i)**2 + vz%d(i)**2
+    end do
+    tmp = tmp*j
+    if (partofsize%d(j) > 1) then
+      tmp = 3*temps%d(j)/tmp*partofsize%d(j)
+    elseif (partofsize%d(j) == 1) then
+      call randir(vx%d(sizestart(j)), vy%d(sizestart(j)), vz%d(sizestart(j)))
+      tmp = 3*temps%d(j)/j
+    end if
+    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
+      vx%d(i) = vx%d(i)*sqrt(tmp)
+      vy%d(i) = vy%d(i)*sqrt(tmp)
+      vz%d(i) = vz%d(i)*sqrt(tmp)
+    end do
+  end do
+  
+  do i = 1, np
+    vx%d(i) = vx%d(i)/sqrt(temps%d(vmass%d(i)))
+    vy%d(i) = vy%d(i)/sqrt(temps%d(vmass%d(i)))
+    vz%d(i) = vz%d(i)/sqrt(temps%d(vmass%d(i)))
+  end do
+  do i = 1, np
+    vs%d(i) = vx%d(i)**2+vy%d(i)**2+vz%d(i)**2
+  end do
+  tempsum = 0
+  do j = 1, maxmass
+    temps%d(j) = 0.0d0
+    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
+      temps%d(j) = temps%d(j) + vs%d(i)
+    end do
+    tempsum = tempsum + temps%d(j)*j
+    temps%d(j) = (temps%d(j)*j)/max(1,partofsize%d(j))/3
+  end do
+  Deallocate(sizestart)
+  if (verbose > 0) then
+    print *, 'Monomer Temperature', temps%d(1)
+    print *, 'TOTAL ENERGY START', tempsum
+  end if
+  
+  call vmaxvec%init(npt)
+  vmaxvec%d(:np) = sqrt(vs%d(:np))
+  
+  call FullApproximateM(u, v, ui, vi, vmass, vmaxvec, maxmass)
+  r = u%m
+  call usum%init(r)
+  call vsum%init(r)
+  call uioi%init(r)
+  call uioj%init(r)
+  call uiok%init(r)
+  call vioi%init(r)
+  call vioj%init(r)
+  call viok%init(r)
+  call totalvec%init(r)
+  utree = treebuild(ui, treestart)
+  vtree = treebuild(vi, treestart)
+  usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+  vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+  totalvec%d(:) = usum%d(:)*vsum%d(:)
+  totalrate = sum(totalvec%d)
+  
+  curtime = 0.0d0
+  lasttime = 0.0d0
+  
+  timeold = curtime
+  
+  step = 0
+!   open(2, file='TimeTemps3')
+!   open(3, file='TimeConc3')
+  cursec = dsecnd()
+  do while (curtime < maxtime)
+    step = step + 1
+    i1 = 0
+    do while (1 > 0)
+      !2 comes from integration over e vector in advance
+      curtime = curtime - log(grnd())/n0*np0/totalrate/pi*2
+      !print *, n0, np0, totalrate, curtime
+      
+      randi = grnd()*totalrate
+      do curr = 1, r-1
+        randi = randi - totalvec%d(curr)
+        if (randi <= 0) then
+          exit
+        end if
+      end do
+      randi = grnd()*usum%d(curr)
+      tmpi = treefindr(utree, ui, randi, curr, treestart)
+      randi = grnd()*vsum%d(curr)
+      tmpi2 = treefindr(vtree, vi, randi, curr, treestart)
+      
+      if (tmpi2 > tmpi) then
+        i0 = tmpi
+        j0 = tmpi2
+      else
+        i0 = tmpi2
+        j0 = tmpi
+      end if
+      
+      if ((j0 <= np) .and. (i0 <= np) .and. (i0 .ne. j0)) then
+        dx = vx%d(i0)-vx%d(j0)
+        dy = vy%d(i0)-vy%d(j0)
+        dz = vz%d(i0)-vz%d(j0)
+        vcs = dx**2 + dy**2 + dz**2
+        if (vcs > (grnd()*(vmaxvec%d(i0)+vmaxvec%d(j0)))**2) then
+          exit
+        end if
+      end if
+    end do
+    
+    vcs1 = sqrt(vcs)
+    if (abs(dy) > abs(dx)) then
+      vcs2 = sqrt(dz**2 + dy**2)
+      sm%d(1,1) = 0
+      sm%d(2,1) = -dz/vcs2
+      sm%d(3,1) = dy/vcs2
+      sm%d(1,2) = vcs2/vcs1
+      sm%d(2,2) = -dx*dy/vcs2/vcs1
+      sm%d(3,2) = -dx*dz/vcs2/vcs1
+    else
+      vcs2 = sqrt(dz**2 + dx**2)
+      sm%d(1,1) = -dz/vcs2
+      sm%d(2,1) = 0
+      sm%d(3,1) = dx/vcs2
+      sm%d(1,2) = -dx*dy/vcs2/vcs1
+      sm%d(2,2) = vcs2/vcs1
+      sm%d(3,2) = -dz*dy/vcs2/vcs1
+    end if
+    ran = sqrt(grnd())
+    ran1 = sqrt(1 - ran**2)
+    ran2 = grnd()*2*pi
+    tau = ran1*cos(ran2)
+    tau2 = ran1*sin(ran2)
+    ex = ran*dx/vcs1 + tau*sm%d(1,1) + tau2*sm%d(1,2)
+    ey = ran*dy/vcs1 + tau*sm%d(2,1) + tau2*sm%d(2,2)
+    ez = ran*dz/vcs1 + tau*sm%d(3,1) + tau2*sm%d(3,2)
+    
+    i2 = vmass%d(i0)
+    j2 = vmass%d(j0)
+    
+    if (BounceIf(dx, dy, dz, ex, ey, ez, i2, j2)) then
+      e = ecoef(dx, dy, dz, ex, ey, ez, i2, j2)
+      vcs = (1+e)*vcs1*ran
+      vcs1 = vcs*j2/(i2 + j2)
+      vcs2 = vcs*i2/(i2 + j2)
+      vx%d(i0) = vx%d(i0) - vcs1*ex
+      vy%d(i0) = vy%d(i0) - vcs1*ey
+      vz%d(i0) = vz%d(i0) - vcs1*ez
+      vx%d(j0) = vx%d(j0) + vcs2*ex
+      vy%d(j0) = vy%d(j0) + vcs2*ey
+      vz%d(j0) = vz%d(j0) + vcs2*ez
+      vcs = vx%d(i0)**2+vy%d(i0)**2+vz%d(i0)**2
+      vs%d(i0) = vcs
+      
+      if (vcs > vmaxvec%d(i0)**2) then
+      vmaxvec%d(i0) = sqrt(vcs)
+        
+      uioi%d(:) = ui%d(i0,:)
+      vioi%d(:) = vi%d(i0,:)
+        
+      call OneUpdateM(i0, u, v, ui, vi, vmass, vmaxvec)
+        
+      uioi%d(:) = ui%d(i0,:) - uioi%d(:)
+      vioi%d(:) = vi%d(i0,:) - vioi%d(:)
+        
+      call treeupdate2(utree, ui, i0, treestart, uioi)
+      call treeupdate2(vtree, vi, i0, treestart, vioi)
+      usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+      vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+      totalvec%d(:) = usum%d(:)*vsum%d(:)
+      totalrate = sum(totalvec%d)
+      end if
+        
+      vcs = vx%d(j0)**2+vy%d(j0)**2+vz%d(j0)**2
+      vs%d(j0) = vcs
+      if (vcs > vmaxvec%d(j0)**2) then
+      vmaxvec%d(j0) = sqrt(vcs)
+        
+      uioi%d(:) = ui%d(j0,:)
+      vioi%d(:) = vi%d(j0,:)
+        
+      call OneUpdateM(j0, u, v, ui, vi, vmass, vmaxvec)
+        
+      uioi%d(:) = ui%d(j0,:) - uioi%d(:)
+      vioi%d(:) = vi%d(j0,:) - vioi%d(:)
+        
+      call treeupdate2(utree, ui, j0, treestart, uioi)
+      call treeupdate2(vtree, vi, j0, treestart, vioi)
+      
+      usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+      vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+      totalvec%d(:) = usum%d(:)*vsum%d(:)
+      totalrate = sum(totalvec%d)
+      end if
+    else
+      k2 = i2 + j2
+      maxmass = max(maxmass,k2)
+      
+      vx%d(i0) = (i2*vx%d(i0)+j2*vx%d(j0))/k2
+      vy%d(i0) = (i2*vy%d(i0)+j2*vy%d(j0))/k2
+      vz%d(i0) = (i2*vz%d(i0)+j2*vz%d(j0))/k2
+      vmass%d(i0) = k2
+      vcs = vx%d(i0)**2+vy%d(i0)**2+vz%d(i0)**2
+      vs%d(i0) = vcs
+      if (vcs > vmaxvec%d(i0)**2) then
+        vmaxvec%d(i0) = sqrt(vcs)
+      end if
+      vmass%d(j0) = vmass%d(np)
+      vmaxvec%d(j0) = vmaxvec%d(np)
+      vmass%d(np) = 0
+      
+      uioi%d(:) = ui%d(i0,:)
+      vioi%d(:) = vi%d(i0,:)
+      
+      call OneUpdateM(i0, u, v, ui, vi, vmass, vmaxvec)
+      
+      uioi%d(:) = ui%d(i0,:) - uioi%d(:)
+      vioi%d(:) = vi%d(i0,:) - vioi%d(:)
+      
+      call treeupdate2(utree, ui, i0, treestart, uioi)
+      call treeupdate2(vtree, vi, i0, treestart, vioi)
+      
+      uioj%d(:) = ui%d(j0,:)
+      vioj%d(:) = vi%d(j0,:)
+      
+      call OneUpdate(j0, u, v, ui, vi, vmass, vmaxvec)
+      
+      uioj%d(:) = ui%d(j0,:) - uioj%d(:)
+      vioj%d(:) = vi%d(j0,:) - vioj%d(:)
+      
+      call treeupdate2(utree, ui, j0, treestart, uioj)
+      call treeupdate2(vtree, vi, j0, treestart, vioj)
+      
+      uiok%d(:) = - ui%d(np,:)
+      viok%d(:) = - vi%d(np,:)
+      
+      call treeupdate2(utree, ui, np, treestart, uiok)
+      call treeupdate2(vtree, vi, np, treestart, viok)
+      
+      usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+      vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+      totalvec%d(:) = usum%d(:)*vsum%d(:)
+      totalrate = sum(totalvec%d)
+      
+      np = np - 1
+      
+      !Number of particles doubling
+      if (np <= np0/2) then
+        do i = 1, np
+          vmass%d(np+i) = vmass%d(i)
+          vs%d(np+i) = vs%d(i)
+          vmaxvec%d(i) = sqrt(vs%d(i))
+          vmaxvec%d(np+i) = vmaxvec%d(i)
+          call randir(ex, ey, ez)
+          vx%d(np+i) = ex*vmaxvec%d(i)
+          vy%d(np+i) = ey*vmaxvec%d(i)
+          vz%d(np+i) = ez*vmaxvec%d(i)
+        end do
+        np = np*2
+        call u%deinit()
+        call v%deinit()
+        call ui%deinit()
+        call vi%deinit()
+        call FullApproximateM(u, v, ui, vi, vmass, vmaxvec, maxmass)
+        utree = treebuild(ui, treestart)
+        vtree = treebuild(vi, treestart)
+        usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+        vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+        totalvec%d(:) = usum%d(:)*vsum%d(:)
+        totalrate = sum(totalvec%d)
+        n0 = n0/2
+      end if
+    end if
+    
+    !Thermostat (molecular gas)
+    if ((mod(step,Nht) == 0) .and. (gbig > 0)) then
+      tau = gbig*(curtime-lasttime)
+      do j = 1, np
+        j2 = vmass%d(j)
+        if (Tmolgas > 0) then
+          tau2 = sqrt(3*Tmolgas/j2*(1 - exp(-tau*(j2**(gsmall+1))/Tmolgas)))
+          tauexp = exp(-tau*(j2**(gsmall+1))/Tmolgas/2)
+        else
+          tau2 = sqrt(3*tau*j2**(gsmall))
+          tauexp = 1.0d0
+        end if
+        vx%d(j) = vx%d(j)*tauexp+ex*tau2
+        vy%d(j) = vy%d(j)*tauexp+ey*tau2
+        vz%d(j) = vz%d(j)*tauexp+ez*tau2
+      end do
+      lasttime = curtime
+    
+      if (mod(step,Nh) .ne. 0) then
+        vmaxvec%d(:) = sqrt(vs%d(:))
+        call FullUpdateM(u, v, ui, vi, vmass, vmaxvec)
+        utree = treebuild(ui, treestart)
+        vtree = treebuild(vi, treestart)
+        usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+        vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+        totalvec%d(:) = usum%d(:)*vsum%d(:)
+        totalrate = sum(totalvec%d)
+      end if
+    end if
+    
+    if ((mod(step,Nh) == 0) .or. (curtime >= maxtime)) then
+      tempsum = 0
+      call temps%deinit()
+      call temps%init(maxmass)
+      call partofsize%deinit()
+      call partofsize%init(maxmass)
+      do j = 1, np
+        j1 = vmass%d(j)
+        partofsize%d(j1) = partofsize%d(j1)+1
+        vmaxvec%d(j) = sqrt(vs%d(j))
+        temps%d(j1) = temps%d(j1) + vs%d(j)*j1
+        tempsum = tempsum + vs%d(j)*j1
+      end do
+      temps%d(1:maxmass) = temps%d(1:maxmass)/max(1,partofsize%d(1:maxmass))/3
+      if (verbose > 1) then
+        print *, 'TOTAL ENERGY', tempsum
+      end if
+      tavg = tempsum/np/3
+      
+      call FullUpdateM(u, v, ui, vi, vmass, vmaxvec)
+      utree = treebuild(ui, treestart)
+      vtree = treebuild(vi, treestart)
+      usum%d(:) = utree%d(1,:) + utree%d(2,:) + utree%d(3,:) + utree%d(4,:)
+      vsum%d(:) = vtree%d(1,:) + vtree%d(2,:) + vtree%d(3,:) + vtree%d(4,:)
+      totalvec%d(:) = usum%d(:)*vsum%d(:)
+      totalrate = sum(totalvec%d)
+
+      if (verbose > 1) then
+!         write(2, *) curtime, temps%d(1), temps%d(3), temps%d(5), temps%d(8), tavg
+!         write(3, *) curtime, dble(partofsize%d(1))/np0, (n0*np)/np0
+      
+        print *, step, curtime, np, maxmass
+        print *, 'Temperature', temps%d(1), temps%d(2), temps%d(5), temps%d(8), tavg
+        print *, 'Time passed', dsecnd()-cursec
+        
+        timecur = curtime
+        timeold = timecur
+        
+      end if
+    end if
+  end do
+!   close(2)
+!   close(3)
+  n0 = (n0*np)/np0
+  
+  if (verbose > 0) then
+    if (verbose == 1) then
+      print *, 'Time passed', dsecnd()-cursec
+      print *, 'TOTAL ENERGY', tempsum
+    end if
+    print *, 'Collisions', step
+    print *, 'Number density', n0
+    print *, 'DONE'
+  end if
+end
+
 !General DSMC calculation with ballistic trajectories.
 subroutine MonteDSMC(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose)
   Double precision, intent(inout) :: n0 !Total number density; IN and OUT
@@ -640,7 +1122,7 @@ subroutine MonteDSMC(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verb
     i1 = 0
     do while (1 > 0)
       !2 comes from integration over e vector in advance
-      curtime = curtime + 1.0d0/n0*np0/totalrate/pi*2
+      curtime = curtime - log(grnd())/n0*np0/totalrate/pi*2
       
       randi = grnd()*totalrate
       do curr = 1, r-1
@@ -706,6 +1188,9 @@ subroutine MonteDSMC(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verb
     ex = ran*dx/vcs1 + tau*sm%d(1,1) + tau2*sm%d(1,2)
     ey = ran*dy/vcs1 + tau*sm%d(2,1) + tau2*sm%d(2,2)
     ez = ran*dz/vcs1 + tau*sm%d(3,1) + tau2*sm%d(3,2)
+    
+    !print *, ex*dx + ey*dy + ez*dz, vcs1
+    !stop 0
     
     if (BounceIf(dx, dy, dz, ex, ey, ez, i2, j2)) then
       e = ecoef(dx, dy, dz, ex, ey, ez, i2, j2)
@@ -786,7 +1271,9 @@ subroutine MonteDSMC(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verb
         call vmaxvec%init(4*maxmass)
         vmaxvec%d(1:maxmass) = tmpvec%d(1:maxmass)
         call tmpvec%deinit()
-        maxmass = maxmass*4
+        maxmass = maxmass*4 !INCORRECT!!! SHOULD DIVIDE BY 16!!!???
+        !ALSO, AGGREGATION VARIANT OF DSMC IS UNTESTED AT ALL!!! THERE ARE BUGS IN EULER VARIANT: SOME
+        !PARTICLES HAVE ALMOST ZERO SPEEDS AT VERTICAL FALL
         
         call u%deinit()
         call v%deinit()
@@ -990,17 +1477,16 @@ subroutine MonteDSMC(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verb
   end do
 !   close(2)
 !   close(3)
+  n0 = (n0*np)/np0
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd()-cursec
+      print *, 'TOTAL ENERGY', tempsum
     end if
     print *, 'Collisions', step
-    n0 = (n0*np)/np0
     print *, 'Number density', n0
     print *, 'DONE'
   end if
-  
-  n0 = (n0*np)/np0
   
   Deallocate(sizestart)
   do j = 1, size(partofnum)
@@ -1182,7 +1668,7 @@ subroutine MonteDSMCsphere(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas
     i1 = 0
     do while (1 > 0)
       !2 comes from integration over e vector in advance
-      curtime = curtime + 1.0d0/n0*np0/totalrate/pi*2
+      curtime = curtime - log(grnd())/n0*np0/totalrate/pi*2
       
       randi = grnd()*totalrate
       do curr = 1, r-1
@@ -1537,6 +2023,7 @@ subroutine MonteDSMCsphere(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas
   if (verbose > 0) then
     if (verbose == 1) then
       print *, 'Time passed', dsecnd()-cursec
+      print *, 'TOTAL ENERGY', tempsum
     end if
     print *, 'Collisions', step
     print *, 'Number density', n0
@@ -1550,6 +2037,7 @@ subroutine MonteDSMCsphere(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas
   Deallocate(partofnum)
 end
 
+!ONLY FOR NON-AGGREGATING SYSTEMS
 subroutine DSMCup(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose)
   Double precision, intent(inout) :: n0 !Total number density; IN and OUT
   Type(IntVec) :: partofsize !Numbers of particles; IN and OUT
@@ -1692,7 +2180,7 @@ subroutine DSMCup(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose
     step = step + 1
     i = 0
     do while (1 > 0)
-      curtime = curtime - log(grnd())/n0*np0/(np*(np-1)*cijmax)/pi
+      curtime = curtime - log(grnd())/n0*np0/(dble(np)*(np-1)*cijmax)/pi*4
       
       i1 = np+1
       j1 = np+1
@@ -1711,13 +2199,9 @@ subroutine DSMCup(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose
         vcx = ex*(vx%d(i1)-vx%d(j1))
         vcy = ey*(vy%d(i1)-vy%d(j1))
         vcz = ez*(vz%d(i1)-vz%d(j1))
-        vcs = vcx+vcy+vcz
+        vcs = vcx + vcy + vcz
         if (abs(vcs)*(i2**(1.0d0/3.0d0) + j2**(1.0d0/3.0d0))**2 > vmin) then
           exit
-        end if
-        if ((sqrt(vs%d(i1))+sqrt(vs%d(j1)))*(i2**(1.0d0/3.0d0) + j2**(1.0d0/3.0d0))**2 > cijmax) then
-          print *, i2, j2, maxmass
-          stop 0
         end if
       end if
     end do
@@ -1787,22 +2271,10 @@ subroutine DSMCup(n0, partofsize, temps, maxtime, gbig, gsmall, Tmolgas, verbose
       end if
     end if
   end do
-  tempsum = 0
-  do j = 1, maxmass
-    vmaxvec%d(j) = 0
-    temps%d(j) = 0
-    do i = sizestart(j), partofsize%d(j)+sizestart(j)-1
-      vs%d(i) = vx%d(i)**2 + vy%d(i)**2 + vz%d(i)**2
-      temps%d(j) = temps%d(j) + vs%d(i)
-      vmaxvec%d(j) = max(vmaxvec%d(j), vs%d(i))
-    end do
-    vmaxvec%d(j) = sqrt(vmaxvec%d(j))
-    tempsum = tempsum + temps%d(j)*j
-    temps%d(j) = (temps%d(j)*j)/partofsize%d(j)/3
-  end do
   print *, 'Time passed', dsecnd()-cursec
   print *, 'Collisions', step
-  print *, 'Tavg', tempsum/np/3
+  print *, 'TOTAL ENERGY', tempsum
+  !print *, 'Tavg', tempsum/np/3
   print *, 'Number density', n0
   print *, 'DONE'
   Deallocate(sizestart)
@@ -1860,6 +2332,66 @@ subroutine OneUpdate(i, u, v, ui, vi, nvec, vvec)
   do j = 1, u%m
     ui%d(i,j) = u%d(i,j)*Uspeed(vvec%d(i), i, j)*nvec%d(i)
     vi%d(i,j) = v%d(i,j)*Vspeed(vvec%d(i), i, j)*nvec%d(i)
+  end do
+end
+
+!Initial DSMC kernel approximation
+subroutine FullApproximateM(u, v, ui, vi, mvec, vvec, maxmass)
+  Type(Mtrx), intent(out) :: u, v, ui, vi
+  Type(IntVec), intent(in) :: mvec
+  Type(Vector), intent(in) :: vvec
+  Integer(4), intent(in) :: maxmass
+
+  Integer(4) n, r
+  
+  n = vvec%n
+  call DSMCKernel(maxmass, u, v)
+  r = u%m
+  
+  call ui%init(n, r)
+  call vi%init(n, r)
+  call FullUpdateM(u, v, ui, vi, mvec, vvec)
+end
+
+!Update of DSMC kernel using maximum speed values
+subroutine FullUpdateM(u, v, ui, vi, mvec, vvec)
+  Type(Mtrx), intent(in) :: u, v
+  Type(Mtrx) :: ui, vi
+  Type(IntVec), intent(in) :: mvec
+  Type(Vector), intent(in) :: vvec
+  
+  Integer(4) n, i, j, r
+  
+  n = mvec%n
+  do j = n, 1, -1
+    if (mvec%d(j) > 0) then
+      n = j
+      exit
+    end if
+  end do
+  r = u%m
+  do i = 1, r
+    do j = 1, n
+      ui%d(j,i) = u%d(mvec%d(j),i)*Uspeed(vvec%d(j), mvec%d(j), i)
+      vi%d(j,i) = v%d(mvec%d(j),i)*Vspeed(vvec%d(j), mvec%d(j), i)
+    end do
+  end do
+  
+end
+
+!Update i-th low-rank factors in DSMC kernel
+subroutine OneUpdateM(i, u, v, ui, vi, mvec, vvec)
+  Integer(4), intent(in) :: i
+  Type(Mtrx), intent(in) :: u, v
+  Type(Mtrx) :: ui, vi
+  Type(IntVec), intent(in) :: mvec
+  Type(Vector), intent(in) :: vvec
+  
+  Integer(4) j
+
+  do j = 1, u%m
+    ui%d(i,j) = u%d(mvec%d(i),j)*Uspeed(vvec%d(i), mvec%d(i), j)
+    vi%d(i,j) = v%d(mvec%d(i),j)*Vspeed(vvec%d(i), mvec%d(i), j)
   end do
 end
 
